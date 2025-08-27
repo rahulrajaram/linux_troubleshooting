@@ -1,6 +1,53 @@
 # Linux Commands
 
+Purpose: a single-page, production-ready cheatsheet for Linux/SRE triage.
+Optimized for fast on-call use: concise flags, copy-paste recipes, brief notes,
+and clear risk callouts.
+
+Quick Navigation
+- [Binaries & ELF](#binaries--elf)
+- [Text & Data Utilities](#text--data-utilities)
+- [Networking](#networking)
+- [Kernel & Tracing](#kernel--tracing)
+- [Disk & Filesystems](#disk--filesystems)
+- [Processes & Scheduling](#processes--scheduling)
+- [CPU](#cpu)
+- [Memory](#memory)
+- [Logs & Systemd](#logs--systemd)
+- [Security & Audit](#security--audit)
+- [Containers & Namespaces](#containers--namespaces)
+- [Incident Playbooks](#incident-playbooks)
+
+Tip: Use your editor/browser search to jump to any command by its number, e.g., "## 41. lsof".
+
+## Binaries & ELF
+
+Cheat Card
+- Linked libs: `ldd /path/to/bin` (security caveat: may execute code in rare cases)
+- ELF headers/sections: `readelf -h /bin/ls`; sections: `readelf -S /bin/ls`
+- Symbols (prefer readelf): `readelf -Ws /bin/ls | grep ' FUNC '`; dynamic: `readelf -Ws -d /bin/ls`
+- Disassemble: `objdump -d /bin/ls | less` (add `-M intel` for Intel syntax)
+- Symbols via nm: `nm -D /bin/ls | grep symbol_name`
+- Requires: binutils (readelf/objdump/nm)
+
 ## 1. ldd
+
+List shared library dependencies of executables and shared objects.
+- Basic: `ldd /path/to/bin`
+- Security caveat: may execute code in rare cases; avoid on untrusted binaries.
+- Alternative: `LD_TRACE_LOADED_OBJECTS=1 /lib64/ld-linux-x86-64.so.2 /path/to/bin` (still uses loader)
+
+## Text & Data Utilities
+
+Cheat Card
+- Search recursively: `grep -RIn --exclude-dir .git 'pattern' .`; context: `-C2`
+- Edit in-place: `sed -i.bak -E 's/old/new/g' file` (backup)
+- Summarize data: `awk -F, '{a[$1]+=$2} END{for(k in a) print k,a[k]}' file.csv`
+- JSON parse: `jq -r '.items[].metadata.name' file.json`
+- Compare dirs: `diff -ruN dir_old dir_new | less -R`
+- Transform text: `tr -s ' ' | cut -d, -f1,3 | xargs -n1 echo`
+- Safe temp: `mktemp -d` for dirs; files: `mktemp`
+- Reverse lines: `rev <file` (quick visual check)
 
 ## 2. grep
 
@@ -8,15 +55,53 @@
 - search for one or more words: `grep -Ew 'hello|world' temp`
 - search for suffix matches: `grep -E 'hello(world|lolo)' temp`
 - search for suffixes matching regex: `grep -E 'hello[0-9]{3,}' temp`
+- recursive search in tree: `grep -RIn --exclude-dir .git --exclude='*.log' 'pattern' .`
+- fixed strings (fast) and ignore case: `grep -Fni 'literal text' file`
+- context lines: `grep -R --color -n -C2 'pattern' .` (or `-A` after, `-B` before)
+- binary-skip and file names only: `grep -rI -l 'pattern' .`
 
 ## 3. sed
 
+What it does: stream editor for non-interactive find/replace, line edits, and range selections.
+
+- In-place with backup: `sed -i.bak -E 's/old/new/g' file`
+- Delete matching lines: `sed -i '/pattern/d' file`
+- Print lines between markers: `sed -n '/BEGIN/,/END/p' file`
+- Replace with capture groups: `sed -E 's/([0-9]{4})-([0-9]{2})-([0-9]{2})/\3-\2-\1/' file`
+- Insert before/after match:
+  - Before: `sed '/pattern/i\\inserted before' file`
+  - After:  `sed '/pattern/a\\appended after' file`
+- Trim trailing spaces: `sed -i 's/[ \t]\+$//' file`
+- Multiple edits: `sed -E -e 's/foo/bar/g' -e '/tmp/d' file`
+
 ## 4. awk
+
+What it does: text processing and quick data summarization using fields and expressions.
+
+- Default FS is whitespace; set CSV FS: `awk -F, '...' file.csv`
+- Select fields: `awk '{print $1, $3}' file`
+- Filter rows: `awk '$5 > 100 {print $1, $5}' file`
+- Sum a column: `awk '{s+=$3} END{print s}' file`
+- Group and sum by key: `awk '{a[$1]+=$2} END{for (k in a) print k, a[k]}' file`
+- Pretty print: `awk '{printf "%-20s %10d\n", $1, $2}' file`
+- Count unique values: `awk '{c[$1]++} END{for (k in c) print k, c[k]}' file`
+
+## Networking
+
+Cheat Card
+- Ports→PIDs: `ss -ltnp`; established only: `ss -tn state established`
+- TCP detail: `ss -i dst <ip>` (rtt, cwnd, retrans)
+- Path/source IP: `ip route get <dest>`; counters: `ip -s link show <iface>`
+- Latency/loss: `mtr -ezbw <dest>`; quick traceroute ICMP: `traceroute -I <dest>`
+- Targeted capture: `tcpdump -ni <iface> tcp port 443` (or `port 53`, `icmp`)
+- DNS: `resolvectl query <name>` or `dig <name> A +short`
 
 ## 5. ping
 
+- Compat: Linux; Root: may require CAP_NET_RAW depending on system; Requires: iputils-ping.
+
 - `-4`: ping IPv4 only
-- `-6`: ping IPv4 only
+- `-6`: ping IPv6 only
 - `-A`: adapts to roundtrip time
 - `-b`: allow pinging broadcast addresses
 - `-I`: ping through an interface
@@ -27,11 +112,16 @@
 - `ping 224.0.0.1`: ping multicast address
 
 Notes:
-- Using average `rtt` values, you can determine whether there are huge variations causing jitter, especially in RT applications
-- ping will report duplications, however, duplicate packets should never occur, and seem to be caused by inappropriate link-level retransmissions
-- ping will report damaged packets, suggesting broken hardware in the n/w
+- Using average `rtt` values, you can determine whether there are huge variations
+  causing jitter, especially in RT applications
+- ping will report duplications, however, duplicate packets should never occur,
+  and seem to be caused by inappropriate link-level retransmissions
+- ping will report damaged packets, suggesting broken hardware in the network
+Requires: iputils-ping.
 
 ## 6. ip
+
+- Compat: Linux; Root: not required for reads; Requires: iproute2.
 
 - `ip addr`: Show information for all addresses
 - `ip addr show dev wlo1`: Display information only for device wlo1
@@ -41,36 +131,65 @@ Notes:
 
 - `ip -s`: Display interface statistics (packets dropped, received, sent, etc.)
 
+- Quick recipes:
+  - Path and source IP: `ip route get <dest>`
+  - Interface counters: `ip -s link show <iface>` (rx/tx errors, drops)
+  - Neighbors/ARP: `ip neigh` and `ip neigh show dev <iface>`
+  - Multicast: `ip maddr` or `ip maddr show dev <iface>`
+
+Example
+```bash
+# Query path and chosen source IP
+ip route get 8.8.8.8
+# Expect: 8.8.8.8 via 192.168.1.1 dev wlo1 src 192.168.1.23
+```
+
 - `ip route`: List all of the route entries in the kernel
-- `ip route add`: List all of the route entries in the kernel
-- `ip route replace`: List all of the route entries in the kernel
+- `ip route add`: Add a route entry to the kernel routing table
+- `ip route replace`: Replace an existing route (add if not present)
 
 - `ip maddr`: Display multicast information for all devices
 - `ip maddr show dev wlo1`
 
 - `ip neigh show dev wlo1`: check for reachability of specific interfaces   
+Requires: iproute2.
 
 ## 7. arp
+
+- Compat: Legacy; prefer `ip neigh`; Requires: net-tools.
 
 - `arp`: show all ARP table entries
 - `arp -d address`: delete ARP entry for address
 - `arp -s address hw_addr`: set up new table entry
+Note: legacy from net-tools; prefer `ip neigh`. Requires: net-tools.
 
 ## 8. arping
 
+- Compat: Linux; Root/CAP_NET_RAW required; Package: arping (iputils-arping on some distros).
+
 - `arping -I wlo1 192.168.0.1`: send ARP requests to host
 - `arping -D -I wlo1 192.168.0.15`: check for duplicate MAC address
+Requires: arping (iputils-arping on some distros).
 
 ## 9. ethtool
 
-- `ethtool -S wlo1`: print n/w statistics
+- Compat: Linux; Root for changing settings, read stats usually ok; Requires: ethtool.
+
+- `ethtool -S wlo1`: print network statistics
+Requires: ethtool.
 
 ## 10. ss
+
+- Compat: Linux; Modern replacement for netstat; Requires: iproute2.
 
 - `ss -a`: show all sockets
 - `ss -o`: show all sockets with timer information
 - `ss -p`: show process using the socket
 - `ss -t|-u|-4|-6`
+- `ss -ltnp`: list listening TCP sockets with PIDs
+- `ss -tn state established`: show established TCP only
+- `ss -tn sport = :443` or `ss -tn dport = :443`: filter by port
+- `ss -s`: summary stats (TCP states, mem)
 - `ss -i`:
   - `ts`: show string "ts" if the timestamp option is set
   - `sack`: show string "sack" if the sack option is set
@@ -78,10 +197,13 @@ Notes:
   - `ecnseen`: show string "ecnseen" if the saw ecn flag is found in received packets
   - `fastopen`: show string "fastopen" if the fastopen option is set
   - `cong_alg`: the congestion algorithm name, the default congestion algorithm is "cubic"
-  - `wscale:<snd_wscale>:<rcv_wscale>`: if window scale option is used, this field shows the send scale factor and receive scale factor
+  - `wscale:<snd_wscale>:<rcv_wscale>`: if window scale option is used, this field
+    shows the send scale factor and receive scale factor
   - `rto:<icsk_rto>`: tcp re-transmission timeout value, the unit is millisecond
-  - `backoff:<icsk_backoff>`: used for exponential backoff re-transmission, the actual re-transmission timeout value is icsk_rto << icsk_backoff
-  - `rtt:<rtt>/<rttvar>`: rtt is the average round trip time, rttvar is the mean deviation of rtt, their units are millisecond
+  - `backoff:<icsk_backoff>`: used for exponential backoff re-transmission, the
+    actual re-transmission timeout value is icsk_rto << icsk_backoff
+  - `rtt:<rtt>/<rttvar>`: rtt is the average round trip time, rttvar is the mean
+    deviation of rtt, their units are millisecond
   - `ato:<ato>`: ack timeout, unit is millisecond, used for delay ack mode
   - `mss:<mss>`: max segment size
   - `cwnd:<cwnd>`: congestion window size
@@ -96,8 +218,181 @@ Notes:
   - `lastrcv:<lastrcv>`: how long time since the last packet received, the unit is millisecond
   - `lastack:<lastack>`: how long time since the last ack received, the unit is millisecond
 - `ss -A tcp,udp`: dump socket tables
+Requires: iproute2.
+
+## 37. tcpdump
+
+Compat: Linux; Root/CAP_NET_RAW required for captures; Requires: tcpdump.
+What it does: capture packets for inspection and troubleshooting. Requires: tcpdump.
+
+- Interface and no name resolution: `tcpdump -ni <iface>`
+- Host or subnet: `tcpdump -ni <iface> host <ip>`; `tcpdump -ni <iface> net 10.0.0.0/8`
+- Ports/protocols: `tcpdump -ni <iface> tcp port 443` or `udp port 53`
+- SYNs only (new TCP handshakes):
+```bash
+# New TCP handshakes only (SYN without ACK)
+tcpdump -ni <iface> 'tcp[tcpflags] & (tcp-syn) != 0 and tcp[tcpflags] & (tcp-ack) == 0'
+```
+- DNS queries: `tcpdump -ni <iface> port 53`
+- ICMP reachability: `tcpdump -ni <iface> icmp`
+```bash
+# Requires: tcpdump
+# Capture full packets to a file
+tcpdump -ni <iface> -s 0 -w capture.pcap
+
+# Rotate captures every 5m, keep 6 files
+tcpdump -ni <iface> -s 0 -G 300 -W 6 -w 'cap-%Y%m%d%H%M%S.pcap'
+```
+
+## 38. mtr
+
+Compat: Linux; May need root/CAP_NET_RAW for certain probe types; Requires: mtr.
+What it does: combines ping and traceroute to visualize latency and loss per hop.
+
+- Run with extra info: `mtr -ezbw <dest>`
+- Report mode (one-off): `mtr -ezbwrc 10 <dest>`
+Requires: mtr.
+
+## 39. traceroute
+
+- Compat: Linux; Requires: traceroute; TCP mode may need CAP_NET_RAW/root.
+
+- `traceroute -I`: use ICMP echo for probes
+- `traceroute -T`: use TCP SYN for probes
+Requires: traceroute.
+
+## 40. nicstat
+
+- Compat: Linux; Not widely packaged; Consider `sar -n`/`ethtool -S` alternatives.
+
+- nicstat prints out network statistics for all network cards (NICs), including
+  packets, kilobytes per second, average packet sizes and more.
+- `nicstat -t`: show CPU stats
+- `nicstat`: show network interface stats
+Requires: nicstat (may need third-party repo/source on some distros).
+
+<details>
+<summary>Metrics reference (click to expand)</summary>
+
+  - `Time` - The time corresponding to the end of the sample shown, in HH:MM:SS format (24-hour clock).
+  - `Int` - The interface name.
+  - `rKB/s, InKB` - Kilobytes/second read (received).
+  - `wKB/s, OutKB` - Kilobytes/second written (transmitted).
+  - `rMbps, RdMbps` - Megabits/second read (received).
+  - `wMbps, WrMbps` - Megabits/second written (transmitted).
+  - `rPk/s, InSeg, InDG` - Packets (TCP Segments, UDP Datagrams)/second read (received).
+  - `wPk/s, OutSeg, OutDG` - Packets (TCP Segments, UDP Datagrams)/second written (transmitted).
+  - `rAvs` - Average size of packets read (received).
+  - `wAvs` - Average size of packets written (transmitted).
+  - `%Util` - Percentage utilization of the interface. For full-duplex
+    interfaces, this is the greater of rKB/s or wKB/s as a percentage of the
+    interface speed. For half-duplex interfaces, rKB/s and wKB/s are summed.
+  - `%rUtil, %wUtil` - Percentage utilization for bytes read and written, respectively.
+  - `Sat` - Saturation. This the number of errors/second seen for the interface
+    - an indicator the interface may be approaching saturation. This statistic
+    is combined from a number of kernel statistics. It is recommended to use
+    the '-x' option to see more individual statistics (those mentioned below)
+    when attempting to diagnose a network issue.
+  - `IErr` - Packets received that could not be processed because they contained errors
+  - `OErr` - Packets that were not successfully transmitted because of errors
+  - `Coll` - Ethernet collisions during transmit.
+  - `NoCP` - No-can-puts. This is when an incoming packet can not be put to the
+    process reading the socket. This suggests the local process is unable to
+    process incoming packets in a timely manner.
+  - `Defer` - Defer Transmits. Packets without collisions where first transmit
+    attempt was delayed because the medium was busy.
+  - `Reset` - tcpEstabResets. The number of times TCP connections have made a
+    direct transition to the CLOSED state from either the ESTABLISHED state or
+    the CLOSE-WAIT state.
+  - `AttF` - tcpAttemptFails - The number of times that TCP connections have
+    made a direct transition to the CLOSED state from either the SYN-SENT state
+    or the SYN-RCVD state, plus the number of times TCP connections have made a
+    direct transition to the LISTEN state from the SYN-RCVD state.
+  - `%ReTX` - Percentage of TCP segments retransmitted - that is, the number of
+    TCP segments transmitted containing one or more previously transmitted
+    octets.
+  - `InConn` - tcpPassiveOpens - The number of times that TCP connections have
+    made a direct transition to the SYN-RCVD state from the LISTEN state.
+  - `OutCon` - tcpActiveOpens - The number of times that TCP connections have
+    made a direct transition to the SYN-SENT state from the CLOSED state.
+  - `Drops` - tcpHalfOpenDrop + tcpListenDrop + tcpListenDropQ0. tcpListenDrop
+    and tcpListenDropQ0 - Number of connections dropped from the completed
+    connection queue and incomplete connection queue, respectively.
+    tcpHalfOpenDrops - Number of connections dropped after the initial SYN
+    packet was received.
+
+</details>
+
+## 41. nslookup
+
+- Compat: Legacy; prefer `dig`/`resolvectl`; Requires: dnsutils/bind-utils.
+
+query Internet name servers interactively
+
+- `nslookup <domain>`
+- Note: legacy tool. Prefer `dig` for detailed queries or `resolvectl` on
+  systemd-based systems. Requires: dnsutils/bind-utils (for nslookup/dig).
+- Quick equivalents: `dig <domain> A +short`; `resolvectl query <domain>`
+
+## 42. host
+
+- Compat: Linux; Requires: bind9-host/bind-utils.
+
+host is a simple utility for performing DNS lookups. It is normally used to
+convert names to IP addresses and vice versa.
+
+- `host <domain>`
+- Examples: `host -t A <domain>`; reverse lookup: `host <ip>`
+- Tip: for more control, use `dig` (if installed) or `resolvectl`.
+Requires: bind9-host (Debian/Ubuntu) or bind-utils.
+
+## 43. iwconfig
+
+- Compat: Legacy; prefer `iw`; Requires: wireless-tools.
+
+- `iwconfig wlo1`: show WLAN config:
+- Note: `iwconfig` is legacy (wireless-tools). Prefer `iw` for modern drivers,
+  e.g., `iw dev`, `iw dev wlo1 link`.
+Requires: wireless-tools. Modern alternative: iw.
+
+```
+wlo1      IEEE 802.11  ESSID:"NETGEAR97"  
+      Mode:Managed  Frequency:2.462 GHz  Access Point: C4:04:15:58:60:C7   
+      Bit Rate=72.2 Mb/s   Tx-Power=20 dBm   
+      Retry short limit:7   RTS thr=2347 B   Fragment thr:off
+      Power Management:off
+      Link Quality=70/70  Signal level=-32 dBm  
+      Rx invalid nwid:0  Rx invalid crypt:0  Rx invalid frag:0
+      Tx excessive retries:0  Invalid misc:22932   Missed beacon:0
+```
+
+## 44. brctl
+
+- Compat: Legacy; prefer `ip link` and `bridge`; Requires: bridge-utils.
+
+- brctl is used to set up, maintain, and inspect the ethernet bridge configuration in the linux kernel.
+Legacy: prefer `ip link add name br0 type bridge` and `bridge` (iproute2) tooling.
+Requires: bridge-utils.
+
+## Kernel & Tracing
+
+Cheat Card
+- Kernel logs: `dmesg -T -l err,crit,alert,emerg`
+- Syscalls: `strace -ttT -p <pid> -f -e trace=network,file`
+- Modules: `lsmod | head`, `modprobe <name>` (caution), `sysctl -a | grep tcp`
+ - Optional advanced:
+```bash
+# perf (if installed)
+perf top
+perf record -g -p <pid>; perf report
+
+# bpftrace one-liner (Requires: bpftrace)
+bpftrace -e 'tracepoint:syscalls:sys_enter_openat { @[comm] = count(); }'
+```
 
 ## 11. dmesg
+
+- Compat: Linux; May be restricted by `kernel.dmesg_restrict`; Requires: util-linux.
 
 - `dmesg --level=<LEVEL>`
   where `<LEVEL>` is:
@@ -124,49 +419,148 @@ Notes:
 
 ## 12. lsmod
 
-- show status of modules in the Linux kernel
+- Compat: Linux; Lists modules without root; Requires: kmod.
+
+- Show loaded kernel modules and sizes/dependencies.
+- Quick peek: `lsmod | head`
+- Module info (version, params): `modinfo <module>`
 
 ## 13. modprobe
 
+- Compat: Linux; Root required; Caution: can destabilize systems; Requires: kmod.
+
+Add or remove modules from the Linux kernel.
+- Load: `modprobe <module>`; with params: `modprobe <module> key=value`
+- Unload: `modprobe -r <module>` (fails if in use)
+- Caution: loading/unloading modules can destabilize systems; prefer persistent
+  config and ensure module compatibility.
+
+## Disk & Filesystems
+
+Cheat Card
+- Space/inodes: `df -h` and `df -i`; biggest dirs: `du -xhd1 /path | sort -h`
+- IO saturation: `iostat -xz 1`; per-proc IO: `pidstat -d 1`, `iotop -oPa`
+- Devices/FS: `lsblk -o NAME,TYPE,SIZE,ROTA,MOUNTPOINT,MODEL`; mounts: `findmnt`
+- Mount ops: `mount --bind olddir newdir`; remount ro: `mount -o remount,ro /mnt`
+
+Inventory and health
+- Device tree: `lsblk -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,MODEL`
+- Identify filesystem UUID/TYPE: `blkid`
+- SMART check (if supported): `smartctl -H /dev/sdX` and `smartctl -a /dev/sdX` (Requires: smartmontools)
+- NVMe info: `nvme list`; `nvme smart-log /dev/nvme0` (Requires: nvme-cli)
+
+Notes
+- iostat quick view (Requires: sysstat): `iostat -xz 1` (watch `await`, `%util`, `r/s`, `w/s`)
+- findmnt: show mount hierarchy or lookup by target: `findmnt /mount/point`
+
 - adds or removes modules from the Linux Kernel
+- Caution: loading/unloading modules can destabilize systems; prefer persistent
+  config and ensure module compatibility.
 
-## 14. dd (DO NOT SIMPLY RUN THESE)
+## 14. dd (DANGER: DESTRUCTIVE — READ FIRST)
 
-- `dd if=/dev/zero of=/dev/sda bs=4k`: clean up HD 4k blocks at a time
-- `dd if=/dev/sda | hexdump -C | grep [^00]`: check if drive is zeroed out
-- `dd if=/dev/urandom of=myfile bs=6703104 count=1`: fill file with random chars
-- `dd if=/dev/sda3 of=/dev/sdb3 bs=4096`: copy one partition onto another
-- `dd if=/path/to/bootimage.img of=/dev/sdc`: create bootable USG drive
-- `dd if=/home/$user/suspicious.doc | clamscan -`: check file for viruses
-- `dd if=/home/$user/bigfile of=/dev/null && dd if=/dev/zero of=/home/$user/bigfile bs=1024 count=1000000`: benchmark HD for r/w speed
-- `dd if=/dev/mem | strings | grep 'string_to_search'`: examine memory contents
-- `dd if=/proc/kcore | hexdump -C | less`: view virtual memory
-- `dd if=/dev/sda of=/dev/null bs=1024k count=1024`: determine sequential I/O speed for device
-- `dd if=/dev/mem of=myRAM bs=1024`: copy RAM memory to file
-- `dd if=/dev/zero of=swapfile bs=1MiB count=$((8*1024))`: set up swap space for mkswap
+- Compat: Linux; Root required for raw devices; Highly destructive when writing; Requires: coreutils.
+
+- Danger: dd will overwrite data with no confirmation. Double-check devices
+  (e.g., `/dev/sdX`) and consider read-only or safer alternatives first. Use
+  `lsblk`, `blkid` to verify targets.
+- Safer tips: for copies, consider `pv` to visualize throughput; for imaging,
+  `dcfldd`; for testing, prefer non-destructive reads.
+
+```bash
+# Danger: wipes target disk. Verify device with lsblk/blkid.
+dd if=/dev/zero of=/dev/sda bs=4k status=progress
+```
+
+```bash
+# Verify a drive is zeroed (non-zero bytes check)
+dd if=/dev/sda status=none | hexdump -C | grep -q '[^00]' || echo "All zeros"
+```
+
+```bash
+# Fill a file with random data (example size)
+dd if=/dev/urandom of=myfile bs=6703104 count=1 status=progress
+```
+
+```bash
+# Danger: clone a partition to another (same size/align). Verify both!
+dd if=/dev/sda3 of=/dev/sdb3 bs=4096 status=progress conv=fsync
+```
+
+```bash
+# Danger: write an image to a USB device. Verify device path first!
+dd if=/path/to/bootimage.img of=/dev/sdc bs=4M status=progress conv=fsync
+```
+
+```bash
+# Quick r/w benchmark for a file (non-destructive read + temp write)
+dd if=/home/$user/bigfile of=/dev/null status=progress
+dd if=/dev/zero of=/home/$user/bigfile bs=1M count=1000 oflag=dsync status=progress
+```
+
+```bash
+# Sequential device read throughput sample (approx 1 GiB)
+dd if=/dev/sda of=/dev/null bs=1024k count=1024 status=progress
+```
+
+```bash
+# Create a swapfile (example: 8 GiB), then mkswap + swapon
+dd if=/dev/zero of=swapfile bs=1MiB count=$((8*1024)) status=progress
+```
 
 ## 15. jq
 
-- parse JSON string
+- Compat: Linux; Requires: jq package.
+
+What it does: parse/query/transform JSON on the command line. Requires: jq.
+
+- Pretty-print: `jq . file.json`
+- Extract field list: `jq -r '.items[].metadata.name' file.json`
+- Filter by condition: `jq '.[] | select(.status=="RUNNING")' file.json`
+- Transform and count: `jq '[.[] | .level] | group_by(.) | map({level: .[0], count: length})' file.json`
+- Sort and top N: `jq 'sort_by(.time) | reverse | .[0:5]' file.json`
+- From journald: `journalctl -o json | jq -r 'select(.PRIORITY<=3) | .MESSAGE'`
+```bash
+# Requires: jq — show high-priority messages from journald
+journalctl -o json | jq -r 'select(.PRIORITY<=3) | .MESSAGE'
+```
+- Keys and length: `jq 'keys, length' file.json`
 
 ## 16. diff
 
-- compare file line by line
+- Compat: Linux; Requires: diffutils.
+
+- unified diff: `diff -u old.txt new.txt`
+- recursive dirs: `diff -ruN dir_old dir_new`
+- ignore whitespace changes: `diff -u -w old new`
+- handle CRLF: `diff -u --strip-trailing-cr a b`
+- color (if supported): `diff --color=auto -u a b`
+- apply a patch: `patch -p1 < change.diff`
 
 ## 17. uname
 
+- Compat: Linux; Requires: coreutils.
+
 - get all details about the computer
 
-## 18. fsync
+## 18. sync/fsync
 
-- sync in-memory data and metadata changes of a file to storage
+- Compat: Linux; `sync` is user command; `fsync` is a syscall.
+
+- `fsync` is a syscall that flushes a file's in-memory data and metadata to
+  storage. From the shell, use `sync` (flush all dirty data) or `syncfs` (flush
+  a filesystem) when available.
 
 ## 19. mkswap
+
+- Compat: Linux; Root required; Requires: util-linux.
 
 - `-c`: check if blocks are corrupted
 - `-p`: set pagesize
 
 ## 20. fsck
+
+- Compat: Linux; Root required; Avoid on mounted filesystems; Requires: e2fsprogs for ext*.
 
 - check for file system consistency:
   - The superblock is checked for inconsistencies in:
@@ -181,15 +575,41 @@ Notes:
     - Bad block numbers
     - Inode size
 - see: https://docs.oracle.com/cd/E19455-01/805-7228/6j6q7uf0e/index.html
+- Caution: avoid running fsck on a mounted filesystem (except with specific fs
+  support); prefer read-only mounts or maintenance windows.
+
+Extended notes
+- ext* specifics: `e2fsck` checks ext2/3/4; use `-f` to force, `-n` for read-only,
+  `-p` for preen (auto-fix safe issues). Requires: e2fsprogs.
+- Bad blocks (DANGER): `badblocks` scans devices for bad sectors; write-mode is
+  destructive. Prefer read-only first.
+
+Examples
+```bash
+# Read-only badblocks scan (non-destructive)
+sudo badblocks -sv /dev/sdX
+
+# DANGER: write-mode destructive scan — data loss
+sudo badblocks -wsv /dev/sdX
+
+# ext* filesystem check (read-only)
+sudo e2fsck -fn /dev/sdXN
+```
 
 ## 21. mount
+
+- Compat: Linux; Root required unless user mounts configured; Requires: util-linux.
 
 - `mount -a [-t type] [-O optlist]`: mount all FSs mentioned in fstab to be mounted
 - `-o`: override the settings in fstab
 - `mount --bind olddir newdir`: remount part of the hierarchy elsewhere
 - `mount --move`: move mounted tree to another place
+- Caution: `--bind/--move` and remounts can impact running services; ensure
+  correct `fstab` for persistence and have rollback plan.
 
 ## 22. umount
+
+- Compat: Linux; Root required for system mounts; Requires: util-linux.
 
 - unmount from a mountpoint
 
@@ -199,55 +619,75 @@ Notes:
 
 ## 24. sysctl
 
+- Compat: Linux; Root required for `-w`; Persistence via `/etc/sysctl.d`; Requires: procps.
+
 - configure kernel parameters at runtime
 - `sysctl -a | grep "tcp"`
+- Caution: `sysctl -w` changes take effect immediately; persist only via
+  `/etc/sysctl.d/*.conf` after validation.
+- Read a key: `sysctl net.ipv4.tcp_congestion_control`
+- Set a key (runtime): `sysctl -w vm.swappiness=10`
+- Persist: create `/etc/sysctl.d/99-local.conf` with `vm.swappiness = 10`, then `sysctl --system`
 
 ## 25. iotop
+
+- Compat: Linux; Root required; Needs kernel taskstats/delay accounting; Python tool.
 
 - `iotop -o`: only show threads doing I/O
 - `iotop -p <PID1>,<PID2>,...`: list of processes to monitor
 - `iotop -a`: show accumulated IO rather than diff
+Requires: iotop.
 
 ## 26. netstat
 
-- shows information similar to `ss`
+- Compat: Legacy; prefer `ss`; Requires: net-tools.
+
+## Processes & Scheduling
+
+Cheat Card
+- Top offenders: `ps -eo pid,ppid,user,%cpu,%mem,cmd --sort=-%cpu | head`
+- Threads view: `top -H` or `ps -Lp <pid> -o pid,tid,pcpu,comm`
+- Target processes:
+```bash
+# Preview before signaling
+pgrep -a <name>
+
+# Then send a scoped, safe signal (example: TERM)
+pkill -TERM -u <user> -f '<exact-pattern>'
+```
+- Over time: `pidstat -u 1 -p <pid>` (CPU) and `pidstat -d 1` (IO)
+- Find PIDs: `pidof <proc>`; list threads: `ps -Lp <pid>`
+- Niceness: start `nice -n 10 cmd`; adjust: `renice -n 10 -p <pid>`
+- Locks: `/proc/locks` shows current file locks (read-only)
+- Sessions: users `who`; recent logins `last | head`
+- Schedule: `crontab -l` list; `crontab -e` edit
+
+- Deprecated in many distros; prefer `ss`.
+- Common mappings:
+  - `netstat -tulpn` -> `ss -tulpn`
+  - `netstat -anp` -> `ss -anp`
+  - `netstat -s` -> `ss -s`
 
 ## 27. top
 
-- provides a dynamic real-time view of a running system
-- can display system summary information as well as a list of processes or threads currently being managed by the Linux kernel
-- descriptions of fields:
-  - `%MEM` - simply RES divided by total physical memory
-  - `CODE` - the 'pgms' portion of quadrant 3
-  - `DATA` - the entire quadrant 1 portion of VIRT plus all explicit mmap file-backed pages of quadrant 3
-  - `RES` - anything occupying physical memory which, beginning with Linux-4.5, is the sum of the following three fields:
-    - `RSan` - quadrant 1 pages, which include any former quadrant 3 pages if modified
-    - `RSfd` - quadrant 3 and quadrant 4 pages
-    - `RSsh` - quadrant 2 pages
-  - `RSlk` - subset of RES which cannot be swapped out (any quadrant)
-  - `SHR` - subset of RES (excludes 1, includes all 2 & 4, some 3)
-  - `SWAP` - potentially any quadrant except 4
-  - `USED` - simply the sum of RES and SWAP
-  - `VIRT` - everything in-use and/or reserved (all quadrants)
-  - `us, user` - time running un-niced user processes
-  - `sy, system` - time running kernel processes
-  - `ni, nice` - time running niced user processes
-  - `id, idle` - time spent in the kernel idle handler
-  - `wa, IO-wait` - time waiting for I/O completion
-  - `hi` - time spent servicing hardware interrupts
-  - `si` - time spent servicing software interrupts
-  - `st` - time stolen from this vm by the hypervisor
+- Compat: Linux; Requires: procps.
+
+- Dynamic process view with CPU, memory, and load summaries.
+- Key CPU line fields: `us` (user), `sy` (system), `ni`, `id` (idle), `wa`
+  (iowait), `hi/si` (IRQ/softIRQ), `st` (steal).
+- Key per-proc fields: `%CPU`, `%MEM`, `VIRT` (virtual), `RES` (resident), `SHR` (shared), `TIME+` (CPU time).
 
 - `top -E m|g`: scale as mega|giga bytes
 - `top -H`: thread-mode
 - `top -i`: show idle processes
 - `top -o RES|VIRT|SWAP`, etc: sort by attribute
 - `top -O`: output fields: print all available sort-attributes
-  - CGNAME CGROUPS CODE COMMAND %CPU DATA ENVIRON Flags GID GROUP LXC %MEM nDRT NI nMaj nMin nsIPC nsMNT nsNET nsPID nsUSER nsUTS nTH NU OOMa OOMs P PGRP PID PPID PR RES RSan RSfd RSlk RSsh RUID RUSER S SHR SID SUID SUPGIDS SUPGRPS SUSER SWAP TGID TIME TIME+ TPGID TTY UID USED USER VIRT vMj vMn WCHAN
 - `top -p pid1,pid2,...`: monitor only these PIDs
 - `top -1`: show per-CPU stats
 
 ## 28. vmstat
+
+- Compat: Linux; Requires: procps.
 
 Useful to get so/si information
 
@@ -255,23 +695,53 @@ Useful to get so/si information
 - `vmstat -a`: number active/inactive memory
 - `vmstat --stats`: various statistics
 
+Interpretation tips
+- `r` runnable > number of CPUs indicates run-queue contention.
+- `b` blocked processes (often IO wait); correlate with `%wa` in top/mpstat.
+- `si/so` swap in/out: sustained non-zero values indicate memory pressure.
+- Use `vmstat 1` for near-real-time view.
+
 ## 29. strace
 
+- Compat: Linux; May be restricted by ptrace scope; Requires: strace.
+
+Trace system calls and signals.
+- Attach to a PID: `strace -ttT -p <pid> -f -e trace=network,file,fsync,clock,nanosleep`
+- Run a program under strace: `strace -o strace.log -s 200 -vv -f -ttT your_cmd --arg`
+- Syscall time summary: `strace -c -p <pid>`
+- Filter a path: `strace -ttT -e trace=file -P /etc/resolv.conf -p <pid>`
+- Notes: `-f` follows forks; `-ttT` adds timestamps and syscall durations; `-s` increases string size.
 - trace system calls and signals
 
 ## 30. slabtop
 
+- Compat: Linux; Requires: procps.
+
 - `slabtop`: display kernel slab cache information in real time
+- Sort by size: `slabtop -s c`; one-shot: `slabtop -o`
 
 ## 31. uptime
+
+- Compat: Linux; Requires: procps.
 
 - information about how long the system has been up, and load averages
 
 ## 32. htop
 
+- Compat: Linux; Requires: htop package.
+
 - like top, but prettier
 
 ## 33. ps
+
+- Compat: Linux; Requires: procps.
+
+Cheat Card
+- Top CPU: `ps -eo pid,ppid,user,%cpu,%mem,cmd --sort=-%cpu | head`
+- Top RSS: `ps -eo pid,user,rss,cmd --sort=-rss | head`
+- Tree view: `ps -ejH` (or `ps axjf`)
+- By command: `ps -C nginx -o pid,ppid,cmd,%mem,%cpu`
+- Threads of a PID: `ps -Lp <pid> -o pid,tid,pcpu,comm`
 
 - `ps aux`: show all processes
 - `ps axjf` - print process tree
@@ -304,18 +774,43 @@ process states:
 
 see STANDARD FORMAT SPECIFIERS in `man ps`
 
+## CPU
+
+Cheat Card
+- CPU saturation: `mpstat -P ALL 1` (sys/iowait/irq/soft)
+- Per-core view in top: `top -1`; over time per PID: `pidstat -u 1 -p <pid>`
+- Interrupt spikes: `mpstat -I CPU 1`
+
 ## 34. mpstat
 
-The mpstat command writes to standard output activities for each available processor, processor 0 being the first one. Global average activities among all processors are also reported.
+- Compat: Linux; Requires: sysstat.
 
-- `CPU`: Processor number. The keyword all indicates that statistics are calculated as averages among all processors.
-- `%usr`: Show the percentage of CPU utilization that occurred while executing at the user level (application).
-- `%nice`: Show the percentage of CPU utilization that occurred while executing at the user level with nice priority.
-- `%sys`: Show the percentage of CPU utilization that occurred while executing at the system level (kernel). Note that this does not include time spent servicing hardware and software interrupts.
-- `%iowait`: Show the percentage of time that the CPU or CPUs were idle during which the system had an outstanding disk I/O request.
+The mpstat command writes to standard output activities for each available
+processor, processor 0 being the first one. Global average activities among all
+processors are also reported.
+Requires: sysstat.
+
+Interpretation tips
+- High `%iowait`: CPUs idle while waiting on disk IO (check iostat).
+- High `%irq/%soft`: heavy interrupts/softirqs (often network or storage).
+- High `%steal`: hypervisor stealing time (noisy neighbor in a VM).
+- Compare per-core: hotspots can be isolated to specific cores (affinity).
+
+- `CPU`: Processor number. The keyword all indicates that statistics are
+  calculated as averages among all processors.
+- `%usr`: Show the percentage of CPU utilization that occurred while executing at
+  the user level (application).
+- `%nice`: Show the percentage of CPU utilization that occurred while executing
+  at the user level with nice priority.
+- `%sys`: Show the percentage of CPU utilization that occurred while executing at
+  the system level (kernel). Note that this does not include time spent
+  servicing hardware and software interrupts.
+- `%iowait`: Show the percentage of time that the CPU or CPUs were idle during
+  which the system had an outstanding disk I/O request.
 - `%irq`: Show the percentage of time spent by the CPU or CPUs to service hardware interrupts.
 - `%soft`: Show the percentage of time spent by the CPU or CPUs to service software interrupts.
-- `%steal`: Show the percentage of time spent in involuntary wait by the virtual CPU or CPUs while the hypervisor was servicing another virtual processor.
+- `%steal`: Show the percentage of time spent in involuntary wait by the virtual
+  CPU or CPUs while the hypervisor was servicing another virtual processor.
 - `%guest`: Show the percentage of time spent by the CPU or CPUs to run a virtual processor.
 - `%gnice`: Show the percentage of time spent by the CPU or CPUs to run a niced guest.
 
@@ -323,7 +818,16 @@ The mpstat command writes to standard output activities for each available proce
   - # of interrupts per CPU
   - # of times a particular interrupt occurred
 
+## Memory
+
+Cheat Card
+- Snapshot: `free -h --wide`; paging: `vmstat -a 1` (si/so)
+- Per-proc memory: `ps -eo pid,user,rss,cmd --sort=-rss | head`; deep dive: `pmap -x <pid>`
+- OOM evidence: `dmesg -T | grep -i oom` or `journalctl -k -g OOM`
+
 ## 35. free
+
+- Compat: Linux; Requires: procps.
 
 - `used` - Used memory (calculated as total - free - buffers - cache)
 - `free` - Unused memory (MemFree and SwapFree in /proc/meminfo)
@@ -331,40 +835,98 @@ The mpstat command writes to standard output activities for each available proce
 - `buffers` - Memory used by kernel buffers (Buffers in /proc/meminfo)
 - `cache` - Memory used by the page cache and slabs (Cached and SReclaimable in /proc/meminfo)
 - `buff/cache` - Sum of buffers and cache
-- `available` - Estimation of how much memory is available for starting new applications, without swapping. Unlike the data provided by the cache or free fields, this field takes into account page cache and also that not all reclaimable memory slabs will be reclaimed due to items being in use (MemAvailable in /proc/meminfo, available on kernels 3.14, emulated on kernels 2.6.27+, otherwise the same as free)
+- `available` - Estimation of how much memory is available for starting new
+  applications, without swapping. Unlike the data provided by the cache or free
+  fields, this field takes into account page cache and also that not all
+  reclaimable memory slabs will be reclaimed due to items being in use
+  (MemAvailable in /proc/meminfo, available on kernels 3.14, emulated on
+  kernels 2.6.27+, otherwise the same as free)
 
 - `free -l`: show low-high memory breakdown
 - `free --wide`: show free memory stats
 
+Interpretation tips
+- `available` approximates memory free for new apps without swapping; don't confuse `free` with usable memory.
+- High `buff/cache` is normal; it's the page cache and reclaimable slabs.
+
+Examples
+- Human-readable snapshot: `free -h --wide`
+- Example output:
+  ```
+                total        used        free      shared  buff/cache   available
+  Mem:           31Gi        2.1Gi       22Gi        312Mi       7.2Gi        28Gi
+  Swap:           8Gi           0B        8Gi
+  ```
+
 ## 36. sar
+
+- Compat: Linux; Requires: sysstat; history needs `sadc` enabled.
+
+Cheat Card
+- CPU load/queue: `sar -q 1 5`; memory: `sar -r 1 5`
+- IO bw/ops: `sar -b 1 5`; per-device: `sar -d 1 5` (watch `await`, `%util`)
+- Network: `sar -n DEV 1 5`; TCP: `sar -n TCP,ETCP 1 5`
+- Paging: `sar -B 1 5` (`pgsteal`, `pgscan`, `majflt/s`)
+
+Requires: sysstat (includes pidstat).
+
+<details>
+<summary>Field reference (click to expand)</summary>
 
 - `sar -B`: report paging stats
   - `gpgin/s` - Total number of kilobytes the system paged in from disk per second.
   - `pgpgout/s` - Total number of kilobytes the system paged out to disk per second.
-  - `fault/s` - Number of page faults (major + minor) made by the system per second. This is not a count of page faults that generate I/O, because some page faults can be resolved without I/O.
-  - `majflt/s` - Number of major faults the system has made per second, those which have required loading a memory page from disk.
+- `fault/s` - Number of page faults (major + minor) made by the system per
+  second. This is not a count of page faults that generate I/O, because some
+  page faults can be resolved without I/O.
+  - `majflt/s` - Number of major faults the system has made per second, those
+    which have required loading a memory page from disk.
   - `pgfree/s` - Number of pages placed on the free list by the system per second.
   - `pgscank/s` - Number of pages scanned by the kswapd daemon per second.
   - `pgscand/s` - Number of pages scanned directly per second.
-  - `pgsteal/s` - Number of pages the system has reclaimed from cache (pagecache and swapcache) per second to satisfy its memory demands.
-  - `%vmeff` - Calculated as pgsteal / pgscan, this is a metric of the efficiency of page reclaim. If it is near 100% then almost every page coming off the tail of the inactive list is being reaped. If it gets too low (e.g. less than 30%) then the virtual memory is having some difficulty. This field is displayed as zero if no pages have been scanned during the interval of time.
+  - `pgsteal/s` - Number of pages the system has reclaimed from cache (pagecache
+    and swapcache) per second to satisfy its memory demands.
+  - `%vmeff` - Calculated as pgsteal / pgscan, this is a metric of the
+    efficiency of page reclaim. If it is near 100% then almost every page coming
+    off the tail of the inactive list is being reaped. If it gets too low (e.g.
+    less than 30%) then the virtual memory is having some difficulty. This
+    field is displayed as zero if no pages have been scanned during the
+    interval of time.
 
 - `sar -b`: Report I/O and transfer rate statistics.
-  - `tps` - Total number of transfers per second that were issued to physical devices. A transfer is an I/O request to a physical device. Multiple logical requests can be combined into a single I/O request to the device. A transfer is of indeterminate size.
+  - `tps` - Total number of transfers per second that were issued to physical
+    devices. A transfer is an I/O request to a physical device. Multiple
+    logical requests can be combined into a single I/O request to the device. A
+    transfer is of indeterminate size.
   - `rtps` - Total number of read requests per second issued to physical devices.
   - `wtps` - Total number of write requests per second issued to physical devices.
-  - `bread/s` - Total amount of data read from the devices in blocks per second. Blocks are equivalent to sectors and therefore have a size of 512 bytes.
+  - `bread/s` - Total amount of data read from the devices in blocks per second.
+    Blocks are equivalent to sectors and therefore have a size of 512 bytes.
   - `bwrtn/s` - Total amount of data written to devices in blocks per second.
 
 - `sar -d`: report activity for each block device
-  - `tps` - Total number of transfers per second that were issued to physical devices. A transfer is an I/O request to a physical device. Multiple logical requests can be combined into a single I/O request to the device. A transfer is of indeterminate size.
+- `tps` - Total number of transfers per second that were issued to physical
+  devices. A transfer is an I/O request to a physical device. Multiple logical
+  requests can be combined into a single I/O request to the device. A transfer
+  is of indeterminate size.
   - `rkB/s` - Number of kilobytes read from the device per second.
   - `wkB/s` - Number of kilobytes written to the device per second.
-  - `areq-sz` - The average size (in kilobytes) of the I/O requests that were issued to the device. Note: In previous versions, this field was known as avgrq-sz and was expressed in sectors.
-  - `aqu-sz` - The average queue length of the requests that were issued to the device. Note: In previous versions, this field was known as avgqu-sz.
-  - `await` - The average time (in milliseconds) for I/O requests issued to the device to be served. This includes the time spent by the requests in queue and the time spent servicing them.
-  - `svctm` - The average service time (in milliseconds) for I/O requests that were issued to the device. Warning! Do not trust this field any more. This field will be removed in a future sysstat version.
-  - `%util` - Percentage of elapsed time during which I/O requests were issued to the device (bandwidth utilization for the device). Device saturation occurs when this value is close to 100% for devices serving requests serially. But for devices serving requests in parallel, such as RAID arrays and modern SSDs, this number does not reflect their performance limits.
+  - `areq-sz` - The average size (in kilobytes) of the I/O requests that were
+    issued to the device. Note: In previous versions, this field was known as
+    avgrq-sz and was expressed in sectors.
+  - `aqu-sz` - The average queue length of the requests that were issued to the
+    device. Note: In previous versions, this field was known as avgqu-sz.
+  - `await` - The average time (in milliseconds) for I/O requests issued to the
+    device to be served. This includes the time spent by the requests in queue
+    and the time spent servicing them.
+  - `svctm` - The average service time (in milliseconds) for I/O requests that
+    were issued to the device. Warning! Do not trust this field any more. This
+    field will be removed in a future sysstat version.
+  - `%util` - Percentage of elapsed time during which I/O requests were issued
+    to the device (bandwidth utilization for the device). Device saturation
+    occurs when this value is close to 100% for devices serving requests
+    serially. But for devices serving requests in parallel, such as RAID arrays
+    and modern SSDs, this number does not reflect their performance limits.
 
 - `sar -F`: display stats. for currently mounted FSs:
   - `MBfsfree` - Total amount of free space in megabytes (including space available only to privileged user).
@@ -380,18 +942,24 @@ The mpstat command writes to standard output activities for each available proce
 
   With the FAN keyword, statistics about fans speed are reported. The following values are displayed:
   - `rpm` - Fan speed expressed in revolutions per minute.
-  - `drpm` - This field is calculated as the difference between current fan speed (rpm) and its low limit (fan_min).
+  - `drpm` - This field is calculated as the difference between current fan
+    speed (rpm) and its low limit (fan_min).
   - `DEVICE` - Sensor device name.
 
   With the FREQ keyword, statistics about CPU clock frequency are reported. The following value is displayed:
-  - `wghMHz` - Weighted average CPU clock frequency in MHz. Note that the cpufreq-stats driver must be compiled in the kernel for this option to work.
+  - `wghMHz` - Weighted average CPU clock frequency in MHz. Note that the
+    cpufreq-stats driver must be compiled in the kernel for this option to work.
 
   With the IN keyword, statistics about voltage inputs are reported. The following values are displayed:
   - `inV` - Voltage input expressed in Volts.
-  - `%in` - Relative input value. A value of 100% means that voltage input has reached its high limit (in_max) whereas a value of 0% means that it has reached its low limit (in_min).
+  - `%in` - Relative input value. A value of 100% means that voltage input has
+    reached its high limit (in_max) whereas a value of 0% means that it has
+    reached its low limit (in_min).
   - `DEVICE` - Sensor device name. 
   
-  With the USB keyword, the sar command takes a snapshot of all the USB devices currently plugged into the system. At the end of the report, sar will display a summary of all those USB devices. The following values are displayed:
+  With the USB keyword, the sar command takes a snapshot of all the USB devices
+  currently plugged into the system. At the end of the report, sar will display
+  a summary of all those USB devices. The following values are displayed:
   - `BUS` - Root hub number of the USB device.
   - `idvendor` - Vendor ID number (assigned by USB organization).
   - `idprod` - Product ID number (assigned by Manufacturer).
@@ -408,7 +976,10 @@ The mpstat command writes to standard output activities for each available proce
   - `rxcmp/s` - Number of compressed packets received per second (for cslip etc.).
   - `txcmp/s` - Number of compressed packets transmitted per second.
   - `rxmcst/s` - Number of multicast packets received per second.
-  - `%ifutil` - Utilization percentage of the network interface. For half-duplex interfaces, utilization is calculated using the sum of rxkB/s and txkB/s as a percentage of the interface speed. For full-duplex, this is the greater of rxkB/S or txkB/s.
+  - `%ifutil` - Utilization percentage of the network interface. For
+    half-duplex interfaces, utilization is calculated using the sum of rxkB/s
+    and txkB/s as a percentage of the interface speed. For full-duplex, this is
+    the greater of rxkB/S or txkB/s.
 
 - `sar -n EDEV`:
   - `IFACE` - Name of the network interface for which statistics are reported.
@@ -423,8 +994,12 @@ The mpstat command writes to standard output activities for each available proce
   - `txfifo/s` - Number of FIFO overrun errors that happened per second on transmitted packets.
 
 - `sar -n ICMP`:
-  - `imsg/s` - The total number of ICMP messages which the entity received per second [icmpInMsgs]. Note that this counter includes all those counted by ierr/s.
-  - `omsg/s` - The total number of ICMP messages which this entity attempted to send per second [icmpOutMsgs]. Note that this counter includes all those counted by oerr/s.
+  - `imsg/s` - The total number of ICMP messages which the entity received per
+    second [icmpInMsgs]. Note that this counter includes all those counted by
+    ierr/s.
+  - `omsg/s` - The total number of ICMP messages which this entity attempted to
+    send per second [icmpOutMsgs]. Note that this counter includes all those
+    counted by oerr/s.
   - `iech/s` - The number of ICMP Echo (request) messages received per second [icmpInEchos].
   - `iechr/s` - The number of ICMP Echo Reply messages received per second [icmpInEchoReps].
   - `oech/s` - The number of ICMP Echo (request) messages sent per second [icmpOutEchos].
@@ -437,114 +1012,121 @@ The mpstat command writes to standard output activities for each available proce
   - `oadrmk/s` - The number of ICMP Address Mask Request messages sent per second [icmpOutAddrMasks].
   - `oadrmkr/s` - The number of ICMP Address Mask Reply messages sent per second [icmpOutAddrMaskReps].
 
-- `sar -n EICMP`:
-  - `ierr/s` - The number of ICMP messages per second which the entity received but determined as having ICMP-specific errors (bad ICMP checksums, bad length, etc.) [icmpInErrors].
-  - `oerr/s` - The number of ICMP messages per second which this entity did not send due to problems discovered within ICMP such as a lack of buffers [icmpOutErrors].
-  - `idstunr/s` - The number of ICMP Destination Unreachable messages received per second [icmpInDestUnreachs].
-  - `odstunr/s` - The number of ICMP Destination Unreachable messages sent per second [icmpOutDestUnreachs].
-  - `itmex/s` - The number of ICMP Time Exceeded messages received per second [icmpInTimeExcds].
-  - `otmex/s` - The number of ICMP Time Exceeded messages sent per second [icmpOutTimeExcds].
-  - `iparmpb/s` - The number of ICMP Parameter Problem messages received per second [icmpInParmProbs].
-  - `oparmpb/s` - The number of ICMP Parameter Problem messages sent per second [icmpOutParmProbs].
-  - `isrcq/s` - The number of ICMP Source Quench messages received per second [icmpInSrcQuenchs].
-  - `osrcq/s` - The number of ICMP Source Quench messages sent per second [icmpOutSrcQuenchs].
-  - `iredir/s` - The number of ICMP Redirect messages received per second [icmpInRedirects].
-  - `oredir/s` - The number of ICMP Redirect messages sent per second [icmpOutRedirects].
+- `sar -n EICMP`: Extended ICMP stats (errors, dest unreachable, time exceeded).
+  Focus on spikes in `ierr/s` and `oerr/s`, and patterns in unreachable/time-
+  exceeded when debugging path issues.
 
-- `sar -n EIP`:
-  - `ihdrerr/s` - The number of input datagrams discarded per second due to errors in their IP headers, including bad checksums, version number mismatch, other format errors, time-to-live exceeded, errors discovered in processing their IP options, etc. [ipInHdrErrors]
-  - `iadrerr/s` - The number of input datagrams discarded per second because the IP address in their IP header's destination field was not a valid address to be received at this entity. This count includes invalid addresses (e.g., 0.0.0.0) and addresses of unsupported Classes (e.g., Class E). For entities which are not IP routers and therefore do not forward datagrams, this counter includes datagrams discarded because the destination address was not a local address [ipInAddrErrors].
-  - `iukwnpr/s` - The number of locally-addressed datagrams received successfully but discarded per second because of an unknown or unsupported protocol [ipInUnknownProtos].
-  - `idisc/s` - The number of input IP datagrams per second for which no problems were encountered to prevent their continued processing, but which were discarded (e.g., for lack of buffer space) [ipInDiscards]. Note that this counter does not include any datagrams discarded while awaiting re-assembly.
-  - `odisc/s` - The number of output IP datagrams per second for which no problem was encountered to prevent their transmission to their destination, but which were discarded (e.g., for lack of buffer space) [ipOutDiscards]. Note that this counter would include datagrams counted in fwddgm/s if any such packets met this (discretionary) discard criterion.
-  - `onort/s` - The number of IP datagrams discarded per second because no route could be found to transmit them to their destination [ipOutNoRoutes]. Note that this counter includes any packets counted in fwddgm/s which meet this 'no-route' criterion. Note that this includes any datagrams which a host cannot route because all of its default routers are down.
-  - `asmf/s` - The number of failures detected per second by the IP re-assembly algorithm (for whatever reason: timed out, errors, etc) [ipReasmFails]. Note that this is not necessarily a count of discarded IP fragments since some algorithms can lose track of the number of fragments by combining them as they are received.
-  - `fragf/s` - The number of IP datagrams that have been discarded per second because they needed to be fragmented at this entity but could not be, e.g., because their Don't Fragment flag was set [ipFragFails].
+- `sar -n EIP`: Extended IPv4 stats (header errors, addr errors, discards, no
+  routes, reassembly, fragment fails). Use to spot header errors and routing/
+  no-route conditions.
 
-- `sar -n IP6`:
-  - `irec6/s` - The total number of input datagrams received from interfaces per second, including those received in error [ipv6IfStatsInReceives].
-  - `fwddgm6/s` - The number of output datagrams per second which this entity received and forwarded to their final destinations [ipv6IfStatsOutForwDatagrams].
-  - `idel6/s` - The total number of datagrams successfully delivered per second to IPv6 user-protocols (including ICMP) [ipv6IfStatsInDelivers].
-  - `orq6/s` - The total number of IPv6 datagrams which local IPv6 user-protocols (including ICMP) supplied per second to IPv6 in requests for transmission [ipv6IfStatsOutRequests]. Note that this counter does not include any datagrams counted in fwddgm6/s.
-  - `asmrq6/s` - The number of IPv6 fragments received per second which needed to be reassembled at this interface [ipv6IfStatsReasmReqds].
-  - `asmok6/s` - The number of IPv6 datagrams successfully reassembled per second [ipv6IfStatsReasmOKs].
-  - `imcpck6/s` - The number of multicast packets received per second by the interface [ipv6IfStatsInMcastPkts].
-  - `omcpck6/s` - The number of multicast packets transmitted per second by the interface [ipv6IfStatsOutMcastPkts].
-  - `fragok6/s` - The number of IPv6 datagrams that have been successfully fragmented at this output interface per second [ipv6IfStatsOutFragOKs].
-  - `fragcr6/s` - The number of output datagram fragments that have been generated per second as a result of fragmentation at this output interface [ipv6IfStatsOutFragCreates].
+- `sar -n IP6`: IPv6 per-protocol counters (receive/deliver/forward, multicast,
+  fragmentation). Check for anomalies similar to IPv4.
 
-- `sar -n EIP6`:
-  - `ihdrer6/s` - The number of input datagrams discarded per second due to errors in their IPv6 headers, including version number mismatch, other format errors, hop count exceeded, errors discovered in processing their IPv6 options, etc. [ipv6IfStatsInHdrErrors]
-  - `iadrer6/s` - The number of input datagrams discarded per second because the IPv6 address in their IPv6 header's destination field was not a valid address to be received at this entity. This count includes invalid addresses (e.g., ::0) and unsupported addresses (e.g., addresses with unallocated prefixes). For entities which are not IPv6 routers and therefore do not forward datagrams, this counter includes datagrams discarded because the destination address was not a local address [ipv6IfStatsInAddrErrors].
-  - `iukwnp6/s` - The number of locally-addressed datagrams received successfully but discarded per second because of an unknown or unsupported protocol [ipv6IfStatsInUnknownProtos].
-  - `i2big6/s` - The number of input datagrams that could not be forwarded per second because their size exceeded the link MTU of outgoing interface [ipv6IfStatsInTooBigErrors].
-  - `idisc6/s` - The number of input IPv6 datagrams per second for which no problems were encountered to prevent their continued processing, but which were discarded (e.g., for lack of buffer space) [ipv6IfStatsInDiscards]. Note that this counter does not include any datagrams discarded while awaiting re-assembly.
-  - `odisc6/s` - The number of output IPv6 datagrams per second for which no problem was encountered to prevent their transmission to their destination, but which were discarded (e.g., for lack of buffer space) [ipv6IfStatsOutDiscards]. Note that this counter would include datagrams counted in fwddgm6/s if any such packets met this (discretionary) discard criterion.
-  - `inort6/s` - The number of input datagrams discarded per second because no route could be found to transmit them to their destination [ipv6IfStatsInNoRoutes].
-  - `onort6/s` - The number of locally generated IP datagrams discarded per second because no route could be found to transmit them to their destination [unknown formal SNMP name].
-  - `asmf6/s` - The number of failures detected per second by the IPv6 re-assembly algorithm (for whatever reason: timed out, errors, etc.) [ipv6IfStatsReasmFails]. Note that this is not necessarily a count of discarded IPv6 fragments since some algorithms can lose track of the number of fragments by combining them as they are received.
-  - `fragf6/s` - The number of IPv6 datagrams that have been discarded per second because they needed to be fragmented at this output interface but could not be [ipv6IfStatsOutFragFails].
-  - `itrpck6/s` - The number of input datagrams discarded per second because datagram frame didn't carry enough data [ipv6IfStatsInTruncatedPkts].
+- `sar -n EIP6`: Extended IPv6 errors and routing stats (header/addr errors,
+  discards, no routes, reassembly/frag). Useful for IPv6-specific
+  troubleshooting.
 
 - `sar -n SOCK`:
   - `totsck` - Total number of sockets used by the system.
-  - `tcpsck` - Number of TCP sockets currently in use.
-  - `udpsck` - Number of UDP sockets currently in use.
-  - `rawsck` - Number of RAW sockets currently in use.
-  - `ip-frag` - Number of IP fragments currently in queue.
-  - `tcp-tw` - Number of TCP sockets in TIME_WAIT state.
+  - `tcpsck` - TCP sockets in use; `tcp-tw` - TIME_WAIT sockets.
 
 - `sar -n SOFT`:
   - `total/s` - The total number of network frames processed per second.
-  - `dropd/s` - The total number of network frames dropped per second because there was no room on the processing queue.
-  - `squeezd/s` - The number of times the softirq handler function terminated per second because its budget was consumed or the time limit was reached, but more work could have been done.
-  - `rx_rps/s` - The number of times the CPU has been woken up per second to process packets via an inter-processor interrupt.
-  - `flw_lim/s` - The number of times the flow limit has been reached per second. Flow limiting is an optional RPS feature that can be used to limit the number of packets queued to the backlog for each flow to a certain amount. This can help ensure that smaller flows are processed even though much larger flows are pushing packets in.
+  - `dropd/s` - The total number of network frames dropped per second because
+    there was no room on the processing queue.
+  - `squeezd/s` - The number of times the softirq handler function terminated
+    per second because its budget was consumed or the time limit was reached,
+    but more work could have been done.
+  - `rx_rps/s` - The number of times the CPU has been woken up per second to
+    process packets via an inter-processor interrupt.
+  - `flw_lim/s` - The number of times the flow limit has been reached per
+    second. Flow limiting is an optional RPS feature that can be used to limit
+    the number of packets queued to the backlog for each flow to a certain
+    amount. This can help ensure that smaller flows are processed even though
+    much larger flows are pushing packets in.
 
 - `sar -n TCP`:
-  - `active/s` - The number of times TCP connections have made a direct transition to the SYN-SENT state from the CLOSED state per second [tcpActiveOpens].
-  - `passive/s` - The number of times TCP connections have made a direct transition to the SYN-RCVD state from the LISTEN state per second [tcpPassiveOpens].
-  - `iseg/s` - The total number of segments received per second, including those received in error [tcpInSegs]. This count includes segments received on currently established connections.
-  - `oseg/s` - The total number of segments sent per second, including those on current connections but excluding those containing only retransmitted octets [tcpOutSegs].
+  - `active/s` - The number of times TCP connections have made a direct
+    transition to the SYN-SENT state from the CLOSED state per second
+    [tcpActiveOpens].
+  - `passive/s` - The number of times TCP connections have made a direct
+    transition to the SYN-RCVD state from the LISTEN state per second
+    [tcpPassiveOpens].
+  - `iseg/s` - The total number of segments received per second, including those
+    received in error [tcpInSegs]. This count includes segments received on
+    currently established connections.
+  - `oseg/s` - The total number of segments sent per second, including those on
+    current connections but excluding those containing only retransmitted octets
+    [tcpOutSegs].
 
 - `sar -n ETCP`:
-  - `atmptf/s` - The number of times per second TCP connections have made a direct transition to the CLOSED state from either the SYN-SENT state or the SYN-RCVD state, plus the number of times per second TCP connections have made a direct transition to the LISTEN state from the SYN-RCVD state [tcpAttemptFails].
-  - `estres/s` - The number of times per second TCP connections have made a direct transition to the CLOSED state from either the ESTABLISHED state or the CLOSE-WAIT state [tcpEstabResets].
-  - `retrans/s` - The total number of segments retransmitted per second - that is, the number of TCP segments transmitted containing one or more previously transmitted octets [tcpRetransSegs].
-  - `isegerr/s` - The total number of segments received in error (e.g., bad TCP checksums) per second [tcpInErrs].
+  - `atmptf/s` - The number of times per second TCP connections have made a
+    direct transition to the CLOSED state from either the SYN-SENT state or the
+    SYN-RCVD state, plus the number of times per second TCP connections have
+    made a direct transition to the LISTEN state from the SYN-RCVD state
+    [tcpAttemptFails].
+  - `estres/s` - The number of times per second TCP connections have made a
+    direct transition to the CLOSED state from either the ESTABLISHED state or
+    the CLOSE-WAIT state [tcpEstabResets].
+  - `retrans/s` - The total number of segments retransmitted per second - that
+    is, the number of TCP segments transmitted containing one or more
+    previously transmitted octets [tcpRetransSegs].
+  - `isegerr/s` - The total number of segments received in error (e.g., bad TCP
+    checksums) per second [tcpInErrs].
   - `orsts/s` - The number of TCP segments sent per second containing the RST flag [tcpOutRsts].
 
 - `sar -n UDP`:
   - `idgm/s` - The total number of UDP datagrams delivered per second to UDP users [udpInDatagrams].
   - `odgm/s` - The total number of UDP datagrams sent per second from this entity [udpOutDatagrams].
-  - `noport/s` - The total number of received UDP datagrams per second for which there was no application at the destination port [udpNoPorts].
-  - `idgmerr/s` - The number of received UDP datagrams per second that could not be delivered for reasons other than the lack of an application at the destination port [udpInErrors].
+  - `noport/s` - The total number of received UDP datagrams per second for which
+    there was no application at the destination port [udpNoPorts].
+  - `idgmerr/s` - The number of received UDP datagrams per second that could not
+    be delivered for reasons other than the lack of an application at the
+    destination port [udpInErrors].
 
 - `sar -n UDP6`:
   - `idgm6/s` - The total number of UDP datagrams delivered per second to UDP users [udpInDatagrams].
   - `odgm6/s` - The total number of UDP datagrams sent per second from this entity [udpOutDatagrams].
-  - `noport6/s` - The total number of received UDP datagrams per second for which there was no application at the destination port [udpNoPorts].
-  - `idgmer6/s` - The number of received UDP datagrams per second that could not be delivered for reasons other than the lack of an application at the destination port [udpInErrors].
+  - `noport6/s` - The total number of received UDP datagrams per second for
+    which there was no application at the destination port [udpNoPorts].
+  - `idgmer6/s` - The number of received UDP datagrams per second that could not
+    be delivered for reasons other than the lack of an application at the
+    destination port [udpInErrors].
 
 - `sar -q`:
   - `runq-sz` - Run queue length (number of tasks waiting for run time).
   - `plist-sz` - Number of tasks in the task list.
-  - `ldavg-1` - System load average for the last minute. The load average is calculated as the average number of runnable or running tasks (R state), and the number of tasks in uninterruptible sleep (D state) over the specified interval.
+  - `ldavg-1` - System load average for the last minute. The load average is
+    calculated as the average number of runnable or running tasks (R state), and
+    the number of tasks in uninterruptible sleep (D state) over the specified
+    interval.
   - `ldavg-5` - System load average for the past 5 minutes.
   - `ldavg-15` - System load average for the past 15 minutes.
   - `blocked` - Number of tasks currently blocked, waiting for I/O to complete.
 
 - `sar -r`:
   - `kbmemfree` - Amount of free memory available in kilobytes.
-  - `kbavail` - Estimate of how much memory in kilobytes is available for starting new applications, without swapping. The estimate takes into account that the system needs some page cache to function well, and that not all reclaimable memory slabs will be reclaimable, due to items being in use. The impact of those factors will vary from system to system.
-  - `kbmemused` - Amount of used memory in kilobytes (calculated as total installed memory - kbmemfree - kbbuffers - kbcached - kbslab).
+  - `kbavail` - Estimate of how much memory in kilobytes is available for
+    starting new applications, without swapping. The estimate takes into account
+    that the system needs some page cache to function well, and that not all
+    reclaimable memory slabs will be reclaimable, due to items being in use. The
+    impact of those factors will vary from system to system.
+- `kbmemused` - Amount of used memory in kilobytes (calculated as total
+  installed memory - kbmemfree - kbbuffers - kbcached - kbslab).
   - `%memused` - Percentage of used memory.
   - `kbbuffers` - Amount of memory used as buffers by the kernel in kilobytes.
   - `kbcached` - Amount of memory used to cache data by the kernel in kilobytes.
-  - `kbcommit` - Amount of memory in kilobytes needed for current workload. This is an estimate of how much RAM/swap is needed to guarantee that there never is out of memory.
-  - `%commit` - Percentage of memory needed for current workload in relation to the total amount of memory (RAM+swap). This number may be greater than 100% because the kernel usually overcommits memory.
-  - `kbactive` - Amount of active memory in kilobytes (memory that has been used more recently and usually not reclaimed unless absolutely necessary).
-  - `kbinact` - Amount of inactive memory in kilobytes (memory which has been less recently used. It is more eligible to be reclaimed for other purposes).
+- `kbcommit` - Amount of memory in kilobytes needed for current workload. This
+  is an estimate of how much RAM/swap is needed to guarantee that there never is
+  out of memory.
+- `%commit` - Percentage of memory needed for current workload in relation to
+  the total amount of memory (RAM+swap). This number may be greater than 100%
+  because the kernel usually overcommits memory.
+- `kbactive` - Amount of active memory in kilobytes (memory that has been used
+  more recently and usually not reclaimed unless absolutely necessary).
+- `kbinact` - Amount of inactive memory in kilobytes (memory which has been less
+  recently used. It is more eligible to be reclaimed for other purposes).
   - `kbdirty` - Amount of memory in kilobytes waiting to get written back to the disk.
   - `kbanonpg` - Amount of non-file backed pages in kilobytes mapped into userspace page tables.
   - `kbslab` - Amount of memory in kilobytes used by the kernel to cache data structures for its own use.
@@ -556,22 +1138,37 @@ The mpstat command writes to standard output activities for each available proce
   - `kbswpfree` - Amount of free swap space in kilobytes.
   - `kbswpused` - Amount of used swap space in kilobytes.
   - `%swpused` - Percentage of used swap space.
-  - `kbswpcad` - Amount of cached swap memory in kilobytes. This is memory that once was swapped out, is swapped back in but still also is in the swap area (if memory is needed it doesn't need to be swapped out again because it is already in the swap area. This saves I/O).
+- `kbswpcad` - Amount of cached swap memory in kilobytes. This is memory that
+  once was swapped out, is swapped back in but still also is in the swap area
+  (if memory is needed it doesn't need to be swapped out again because it is
+  already in the swap area. This saves I/O).
   - `%swpcad` - Percentage of cached swap memory in relation to the amount of used swap space.
 
 - `sar -u`:
-  - `%user` - Percentage of CPU utilization that occurred while executing at the user level (application). Note that this field includes time spent running virtual processors.
-  - `%usr` - Percentage of CPU utilization that occurred while executing at the user level (application). Note that this field does NOT include time spent running virtual processors.
-  - `%nice` - Percentage of CPU utilization that occurred while executing at the user level with nice priority.
-  - `%system` - Percentage of CPU utilization that occurred while executing at the system level (kernel). Note that this field includes time spent servicing hardware and software interrupts.
-  - `%sys` - Percentage of CPU utilization that occurred while executing at the system level (kernel). Note that this field does NOT include time spent servicing hardware or software interrupts.
-  - `%iowait` - Percentage of time that the CPU or CPUs were idle during which the system had an outstanding disk I/O request.
-  - `%steal` - Percentage of time spent in involuntary wait by the virtual CPU or CPUs while the hypervisor was servicing another virtual processor.
+- `%user` - Percentage of CPU utilization that occurred while executing at the
+  user level (application). Note that this field includes time spent running
+  virtual processors.
+- `%usr` - Percentage of CPU utilization that occurred while executing at the
+  user level (application). Note that this field does NOT include time spent
+  running virtual processors.
+- `%nice` - Percentage of CPU utilization that occurred while executing at the
+  user level with nice priority.
+- `%system` - Percentage of CPU utilization that occurred while executing at the
+  system level (kernel). Note that this field includes time spent servicing
+  hardware and software interrupts.
+- `%sys` - Percentage of CPU utilization that occurred while executing at the
+  system level (kernel). Note that this field does NOT include time spent
+  servicing hardware or software interrupts.
+- `%iowait` - Percentage of time that the CPU or CPUs were idle during which the
+  system had an outstanding disk I/O request.
+- `%steal` - Percentage of time spent in involuntary wait by the virtual CPU or
+  CPUs while the hypervisor was servicing another virtual processor.
   - `%irq` - Percentage of time spent by the CPU or CPUs to service hardware interrupts.
   - `%soft` - Percentage of time spent by the CPU or CPUs to service software interrupts.
   - `%guest` - Percentage of time spent by the CPU or CPUs to run a virtual processor.
   - `%gnice` - Percentage of time spent by the CPU or CPUs to run a niced guest.
-  - `%idle` - Percentage of time that the CPU or CPUs were idle and the system did not have an outstanding disk I/O request.
+- `%idle` - Percentage of time that the CPU or CPUs were idle and the system did
+  not have an outstanding disk I/O request.
 
 - `sar -v`:
   - `dentunusd` - Number of unused cache entries in the directory cache.
@@ -584,193 +1181,63 @@ The mpstat command writes to standard output activities for each available proce
   - `pswpout/s` - Total number of swap pages the system brought out per second.
 
 - `sar -w`: Report task creation and system switching activity.
-  - `proc/s` - Total number of tasks created per second.
-  - `cswch/s` - Total number of context switches per second.
+  - `proc/s` - Tasks created per second; `cswch/s` - context switches per second.
 
 - `sar -y`: Report TTY devices activity. The following values are displayed:
-  - `rcvin/s` - Number of receive interrupts per second for current serial line. Serial line number is given in the TTY column.
+- `rcvin/s` - Number of receive interrupts per second for current serial line.
+  Serial line number is given in the TTY column.
   - `xmtin/s` - Number of transmit interrupts per second for current serial line.
   - `framerr/s` - Number of frame errors per second for current serial line.
   - `prtyerr/s` - Number of parity errors per second for current serial line.
   - `brk/s` - Number of breaks per second for current serial line.
   - `ovrun/s` - Number of overrun errors per second for current serial line.
 
-## 37. tcpdump
+</details>
 
-- `-B buffer_size`: Set the operating system capture buffer size to buffer_size, in units of KiB (1024 bytes).
-- `-i interface`: listen on a specific interface
-- `-I`: turn on monitor mode. before doing this:
-  ```
-  sudo ifconfig wlan0 down
-  sudo iwconfig wlan0 mode Monitor
-  sudo ifconfig wlan0 up
-  ```
-- `--no-promiscuous-mode`
-- `-Q direction in|out|inout`
-- `--absolute-tcp-sequence-numbers`
-- `-w`: write raw packets to file
-- expression
+## 45. pidstat
 
-Examples:
-- To print all packets arriving at or departing from sundown:
-  ```
-  tcpdump host sundown
-  ```
-
-- To print traffic between helios and either hot or ace:
-  ```
-  tcpdump host helios and \( hot or ace \)
-  ```
-
-- To print all IP packets between ace and any host except helios:
-  ```
-  tcpdump ip host ace and not helios
-  ```
-
-- To print all ftp traffic through internet gateway snup: (note that the expression is quoted to prevent the shell from (mis-)interpreting the parentheses):
-  ```
-  tcpdump 'gateway snup and (port ftp or ftp-data)'
-  ```
-
-- To print traffic neither sourced from nor destined for local hosts (if you gateway to one other net, this stuff should never make it onto your local net).
-  ```
-  tcpdump ip and not net localnet
-  ```
-
-- To print the start and end packets (the SYN and FIN packets) of each TCP conversation that involves a non-local host.
-  ```
-  tcpdump 'tcp[tcpflags] & (tcp-syn|tcp-fin) != 0 and not src and dst net localnet'
-  ```
-
-- To print all IPv4 HTTP packets to and from port 80, i.e. print only packets that contain data, not, for example, SYN and FIN packets and ACK-only packets. (IPv6 is left as an exercise for the reader.)
-  ```
-  tcpdump 'tcp port 80 and (((ip[2:2] - ((ip[0]&0xf)<<2)) - ((tcp[12]&0xf0)>>2)) != 0)'
-  ```
-
-- To print IP packets longer than 576 bytes sent through gateway snup:
-  ```
-  tcpdump 'gateway snup and ip[2:2] > 576'
-  ```
-
-- To print IP broadcast or multicast packets that were not sent via Ethernet broadcast or multicast:
-  ```
-  tcpdump 'ether[0] & 1 = 0 and ip[16] >= 224'
-  ```
-
-- To print all ICMP packets that are not echo requests/replies (i.e., not ping packets):
-  ```
-  tcpdump 'icmp[icmptype] != icmp-echo and icmp[icmptype] != icmp-echoreply'
-  ```
-
-## 38. nicstat
-
-- nicstat prints out network statistics for all network cards (NICs), including packets, kilobytes per second, average packet sizes and more.
-- `nicstat -t`: show CP stats
-- `nicstat`: show n/w interface stats
-
-  - `Time` - The time corresponding to the end of the sample shown, in HH:MM:SS format (24-hour clock).
-  - `Int` - The interface name.
-  - `rKB/s, InKB` - Kilobytes/second read (received).
-  - `wKB/s, OutKB` - Kilobytes/second written (transmitted).
-  - `rMbps, RdMbps` - Megabits/second read (received).
-  - `wMbps, WrMbps` - Megabits/second written (transmitted).
-  - `rPk/s, InSeg, InDG` - Packets (TCP Segments, UDP Datagrams)/second read (received).
-  - `wPk/s, OutSeg, OutDG` - Packets (TCP Segments, UDP Datagrams)/second written (transmitted).
-  - `rAvs` - Average size of packets read (received).
-  - `wAvs` - Average size of packets written (transmitted).
-  - `%Util` - Percentage utilization of the interface. For full-duplex interfaces, this is the greater of rKB/s or wKB/s as a percentage of the interface speed. For half-duplex interfaces, rKB/s and wKB/s are summed.
-  - `%rUtil, %wUtil` - Percentage utilization for bytes read and written, respectively.
-  - `Sat` - Saturation. This the number of errors/second seen for the interface - an indicator the interface may be approaching saturation. This statistic is combined from a number of kernel statistics. It is recommended to use the '-x' option to see more individual statistics (those mentioned below) when attempting to diagnose a network issue.
-  - `IErr` - Packets received that could not be processed because they contained errors
-  - `OErr` - Packets that were not successfully transmitted because of errors
-  - `Coll` - Ethernet collisions during transmit.
-  - `NoCP` - No-can-puts. This is when an incoming packet can not be put to the process reading the socket. This suggests the local process is unable to process incoming packets in a timely manner.
-  - `Defer` - Defer Transmits. Packets without collisions where first transmit attempt was delayed because the medium was busy.
-  - `Reset` - tcpEstabResets. The number of times TCP connections have made a direct transition to the CLOSED state from either the ESTABLISHED state or the CLOSE-WAIT state.
-  - `AttF` - tcpAttemptFails - The number of times that TCP connections have made a direct transition to the CLOSED state from either the SYN-SENT state or the SYN-RCVD state, plus the number of times TCP connections have made a direct transition to the LISTEN state from the SYN-RCVD state.
-  - `%ReTX` - Percentage of TCP segments retransmitted - that is, the number of TCP segments transmitted containing one or more previously transmitted octets.
-  - `InConn` - tcpPassiveOpens - The number of times that TCP connections have made a direct transition to the SYN-RCVD state from the LISTEN state.
-  - `OutCon` - tcpActiveOpens - The number of times that TCP connections have made a direct transition to the SYN-SENT state from the CLOSED state.
-  - `Drops` - tcpHalfOpenDrop + tcpListenDrop + tcpListenDropQ0. tcpListenDrop and tcpListenDropQ0 - Number of connections dropped from the completed connection queue and incomplete connection queue, respectively. tcpHalfOpenDrops - Number of connections dropped after the initial SYN packet was received.
-
-## 39. pidstat
+- Compat: Linux; Requires: sysstat.
 
 - monitor individual tasks currently being managed
+Requires: sysstat.
+
+Cheat Card
+- CPU by PID: `pidstat -u 1 -p <pid>` (watch `%usr/%system/%wait`)
+- IO by PID: `pidstat -d 1 -p <pid>` (check `kB_rd/s`, `kB_wr/s`, `iodelay`)
+- Memory faults: `pidstat -r 1 -p <pid>` (watch `majflt/s`)
+- Threads: `pidstat -t -u 1 -p <pid>`
 
 - `pidstat -d`:
-  - `UID` - The real user identification number of the task being monitored.
-  - `USER` - The name of the real user owning the task being monitored.
-  - `PID` - The identification number of the task being monitored.
-  - `kB_rd/s` - Number of kilobytes the task has caused to be read from disk per second.
-  - `kB_wr/s` - Number of kilobytes the task has caused, or shall cause to be written to disk per second.
-  - `kB_ccwr/s` - Number of kilobytes whose writing to disk has been cancelled by the task. This may occur when the task truncates some dirty page-cache. In this case, some IO which another task has been accounted for will not be happening.
-  - `iodelay` - Block I/O delay of the task being monitored, measured in clock ticks. This metric includes the delays spent waiting for sync block I/O completion and for swapin block I/O completion.
+  - Key fields: `kB_rd/s`, `kB_wr/s`, `iodelay` (IO wait), `kB_ccwr/s` (cancelled writes).
 
-- `pidstat -R`: Report realtime priority and scheduling policy information. The following values may be displayed:
-  - `UID` - The real user identification number of the task being monitored.
-  - `USER` - The name of the real user owning the task being monitored.
-  - `PID` - The identification number of the task being monitored.
-  - `prio` - The realtime priority of the task being monitored.
-  - `policy` - The scheduling policy of the task being monitored.
-  - `Command` - The command name of the task.
+- `pidstat -R`: Report realtime priority and scheduling policy information. The
+  following values may be displayed:
+  - Key fields: `prio`, `policy`.
 
 - `pidstat -r`: Report page faults and memory utilization.
 
   When reporting statistics for individual tasks, the following values may be displayed:
-  - `UID` - The real user identification number of the task being monitored.
-  - `USER` - The name of the real user owning the task being monitored.
-  - `PID` - The identification number of the task being monitored.
-  - `minflt/s` - Total number of minor faults the task has made per second, those which have not required loading a memory page from disk.
-  - `majflt/s` - Total number of major faults the task has made per second, those which have required loading a memory page from disk.
-  - `VSZ` - Virtual Size: The virtual memory usage of entire task in kilobytes.
-  - `RSS` - Resident Set Size: The non-swapped physical memory used by the task in kilobytes.
-  - `%MEM` - The tasks's currently used share of available physical memory.
-  - `Command` - The command name of the task.
+  - Key fields: `majflt/s` (major faults), `RSS`, `%MEM`.
 
   When reporting global statistics for tasks and all their children, the following values may be displayed:
-  - `UID` - The real user identification number of the task which is being monitored together with its children.
-  - `USER` - The name of the real user owning the task which is being monitored together with its children.
-  - `PID` - The identification number of the task which is being monitored together with its children.
-  - `minflt-nr` - Total number of minor faults made by the task and all its children, and collected during the interval of time.
-  - `majflt-nr` - Total number of major faults made by the task and all its children, and collected during the interval of time.
-  - `Command` - The command name of the task which is being monitored together with its children.
+  - With children: `majflt-nr`, `minflt-nr` summarize faults.
 
 - `pidstat -s`: Report stack utilization. The following values may be displayed:
-  - `UID` - The real user identification number of the task being monitored.
-  - `USER` - The name of the real user owning the task being monitored.
-  - `PID` - The identification number of the task being monitored.
-  - `StkSize` - The amount of memory in kilobytes reserved for the task as stack, but not necessarily used.
-  - `StkRef` - The amount of memory in kilobytes used as stack, referenced by the task.
-  - `Command` - The command name of the task.
+  - Key fields: `StkRef` (used), `StkSize` (reserved).
 
 - `pidstat -t`: Also display statistics for threads associated with selected tasks. List process and threads
 
 - `pidstat -u`: Report CPU utilization.
 
   When reporting statistics for individual tasks, the following values may be displayed:
-  - `UID` - The real user identification number of the task being monitored.
-  - `USER` - The name of the real user owning the task being monitored.
-  - `PID` - The identification number of the task being monitored.
-  - `%usr` - Percentage of CPU used by the task while executing at the user level (application), with or without nice priority. Note that this field does NOT include time spent running a virtual processor.
-  - `%system` - Percentage of CPU used by the task while executing at the system level (kernel).
-  - `%guest` - Percentage of CPU spent by the task in virtual machine (running a virtual processor).
-  - `%wait` - Percentage of CPU spent by the task while waiting to run.
-  - `%CPU` - Total percentage of CPU time used by the task. In an SMP environment, the task's CPU usage will be divided by the total number of CPU's if option -I has been entered on the command line.
-  - `CPU` - Processor number to which the task is attached.
+  - Key fields: `%usr`, `%system`, `%wait`, `%CPU`, `CPU`.
 
   When reporting global statistics for tasks and all their children, the following values may be displayed:
-  - `UID` - The real user identification number of the task which is being monitored together with its children.
-  - `USER` - The name of the real user owning the task which is being monitored together with its children.
-  - `PID` - The identification number of the task which is being monitored together with its children.
-  - `usr-ms` - Total number of milliseconds spent by the task and all its children while executing at the user level (application), with or without nice priority, and collected during the interval of time. Note that this field does NOT include time spent running a virtual processor.
-  - `system-ms` - Total number of milliseconds spent by the task and all its children while executing at the system level (kernel), and collected during the interval of time.
-  - `guest-ms` - Total number of milliseconds spent by the task and all its children in virtual machine (running a virtual processor).
+  - With children: `usr-ms`, `system-ms`, `guest-ms` summarize CPU time.
 
-## 40. swapon
+## 46. lsof
 
-- swapon, swapoff - enable/disable devices and files for paging and swapping
-
-## 41. lsof
+- Compat: Linux; May require root to see all descriptors; Requires: lsof.
 
 ```
 # List all open files
@@ -818,56 +1285,40 @@ lsof -U # UNIX domain socket use
 
 # List PIDs
 lsof -t -i
+# Danger: broad kill; preview and scope carefully before use
 kill -9 $(lsof -t -i) # Kill all programs w/network activity
 ```
+Requires: lsof.
 
-## 42. pgrep/pkill
+## 51. pmap
 
-## 43. tiptop
+- Compat: Linux; Requires: procps; `-X` needs procps-ng.
 
-- The tiptop program provides a dynamic real-time view of the tasks running in the system. tiptop is very similar to top (1), but the information displayed comes from hardware counters.
-- `tiptop -H`: show threads
+- `pmap 29740 -X`: show
+  Address,Perm,Offset,Device,Inode,Size,Rss,Pss,Referenced,Anonymous,LazyFree,
+  ShmemPmdMapped,Shared_Hugetlb,Private_Hugetlb,Swap,SwapPss,Locked,THPeligible,
+  Mapping
+Requires: procps.
 
-  - CPU_CYCLES
-  - INSTRUCTIONS
-  - CACHE_MISSES
-  - BRANCH_MISSES
-  - %CPU
-  - CPU_TOT
-  - PROC_ID
-  - Cycles (millions)
-  - Instructions (millions)
-  - Executed instructions per cycle
-  - Cache miss per instruction
-  - Branch misprediction per 100 instructions
+Common recipes
+- Largest mappings first: `pmap -x <pid> | sort -nrk 3 | head` (by RSS KB)
+- Totals summary: `pmap <pid>` (last line shows total)
 
-## 44. sensors
+## 52. blktrace
 
-- sensors is used to show the current readings of all sensor chips.
-- `sensors`: shows current, high and critical temps.
+- Compat: Linux; Root required; Needs kernel block trace support; Requires: blktrace.
 
-## 45. traceroute
+- blktrace is a block layer IO tracing mechanism which provides detailed
+  information about request queue operations up to user space. There are three
+  major components: a kernel component, a utility to record the i/o trace
+  information for the kernel to user space, and utilities to analyse and view
+  the trace information.
 
-- `traceroute -I`: use ICMP echo for probes
-- `traceroute -T`: use TCP SYN for probes
-
-## 46. df
-
-- This manual page documents the GNU version of df. df displays the amount of disk space available on the file system containing each file name argument. If no file name is given, the space available on all currently mounted file systems is shown. Disk space is shown in 1K blocks by default, unless the environment variable POSIXLY_CORRECT is set, in which case 512-byte blocks are used.
-
-- `df`: show use/available FS space
-- `df -i`: show used/unused inodes
-- `df --sync`: sync with disk before showing data
-
-## 47. pmap
-
-- `pmap 29740 -X`: show Address,Perm,Offset,Device,Inode,Size,Rss,Pss,Referenced,Anonymous,LazyFree,ShmemPmdMapped,Shared_Hugetlb,Private_Hugetlb,Swap,SwapPss,Locked,THPeligible,Mapping
-
-## 48. blktrace
-
-- blktrace is a block layer IO tracing mechanism which provides detailed information about request queue operations up to user space. There are three major components: a kernel component, a utility to record the i/o trace information for the kernel to user space, and utilities to analyse and view the trace information.
-
-- `sudo blktrace -d /dev/sda -o - | blkparse -i -`
+```bash
+# Trace block I/O on /dev/sda and parse
+sudo blktrace -d /dev/sda -o - | blkparse -i -
+```
+Requires: blktrace.
 
 outputs:
 ```
@@ -913,153 +1364,361 @@ Total (8,0):
  IO unplugs:           665             Timer unplugs:           1
 ```
 
-## 49. btrace
+## 53. btrace
 
-- The btrace script provides a quick and easy way to do live tracing of block devices. It calls blktrace on the specified devices and pipes the output through blkparse for formatting. See blktrace (8) for more in-depth information about how blktrace works.
+- Compat: Linux; Wrapper script from blktrace; Root required.
+
+- The btrace script provides a quick and easy way to do live tracing of block
+  devices. It calls blktrace on the specified devices and pipes the output
+  through blkparse for formatting. See blktrace (8) for more in-depth
+  information about how blktrace works.
 
 - `btrace /dev/sda`
+Requires: blktrace.
 
-## 50. iwconfig
 
-- `iwconfig wlo1`: show WLAN config:
-
-```
-wlo1      IEEE 802.11  ESSID:"NETGEAR97"  
-      Mode:Managed  Frequency:2.462 GHz  Access Point: C4:04:15:58:60:C7   
-      Bit Rate=72.2 Mb/s   Tx-Power=20 dBm   
-      Retry short limit:7   RTS thr=2347 B   Fragment thr:off
-      Power Management:off
-      Link Quality=70/70  Signal level=-32 dBm  
-      Rx invalid nwid:0  Rx invalid crypt:0  Rx invalid frag:0
-      Tx excessive retries:0  Invalid misc:22932   Missed beacon:0
-```
-
-## 51. arp
-
-## 52. nslookup
-
-query Internet name servers interactively
-
-- `nslookup <domain>`
-
-## 53. host
-
-host is a simple utility for performing DNS lookups. It is normally used to convert names to IP addresses and vice versa.
-
-- `host <domain>`
 
 ## 54. tr
+
+- Compat: Linux; Requires: coreutils.
 
 Translate, squeeze, and/or delete characters from standard input, writing to standard output.
 
 - `tr '\n' ','`: convert new lines to commas
+- squeeze repeats: `tr -s ' ' < file` (collapse runs of spaces)
+- delete chars: `tr -d '\r' < file` (remove CR)
+- keep only printable: `tr -cd '[:print:]\n' < file`
+- case convert: `tr '[:upper:]' '[:lower:]' < file`
 
 ## 55. cut
 
+- Compat: Linux; Requires: coreutils.
+
+- select CSV fields: `cut -d, -f1,3 file.csv`
+- ranges: `cut -d: -f1-3 /etc/passwd`
+- bytes/chars: `cut -b1-10 file`; `cut -c1-20 file`
+- complement: `cut -d, -f1 --complement file.csv`
+- with headers: pair with `head -1` to see column indexes
 ## 56. xargs
 
-- tcptrace takes a tcpdump file specified on the command line (or from standard input) and produces a summarization of the connections.
+- Compat: Linux; Requires: findutils; GNU `-r` may vary on BusyBox.
 
-## 57. getconf
+Build and run argument lists; combine with `find` and null-terminated records for safety.
 
-- getconf - Query system configuration variables
+- safe null delim: `find . -type f -name '*.log' -print0 | xargs -0 rm -f`
+- limit args per call: `xargs -n 1 -I{} sh -c 'echo {}'`
+- parallelism: `xargs -P 4 -n 1 cmd` (run 4 at a time)
+- interactive confirm: `xargs -p rm` (ask before each batch)
+- do nothing on empty input: `xargs -r cmd` (GNU)
 
-## 58. brctl
+## Logs & Systemd
 
-- brctl is used to set up, maintain, and inspect the ethernet bridge configuration in the linux kernel.
+Cheat Card
+- Unit status: `systemctl status <unit>`; failed: `systemctl list-units --failed`
+- Hot errors: `journalctl -xeu <unit>`; follow: `journalctl -fu <unit>`
+- Boot scoping: `journalctl -b` and `-b -1`; size: `journalctl --disk-usage`
 
-## 59. badblocks
+Systemd basics
+```bash
+# Unit status and enablement
+systemctl status <unit>
+systemctl is-active <unit>
+systemctl is-enabled <unit>
 
-- badblocks is used to search for bad blocks on a device (usually a disk partition). device is the special file corresponding to the device (e.g /dev/hdc1).
+# Failed units overview
+systemctl list-units --failed
+journalctl -xe  # recent critical logs
 
-## 60. e2fsck
+# Restart and verify logs from this boot
+systemctl restart <unit>
+journalctl -u <unit> -b -n 50
+```
 
-- check a Linux ext2/ext3/ext4 file system
+Journal essentials
+```bash
+# Recent errors for a unit and live follow
+journalctl -xeu <unit>
+journalctl -fu <unit>
 
-## 61. arpspoof
+# Time window and priority
+journalctl -u <unit> --since "1 hour ago" --until now
+journalctl -p err..alert -b
 
-- arpspoof redirects packets from a target host (or all hosts) on the LAN intended for another host on the LAN by forging ARP replies. This is an extremely effective way of sniffing traffic on a switch.
+# Previous boot
+journalctl -b -1
 
-## 62. rev
+# JSON output piped to jq (Requires: jq)
+journalctl -u <unit> -o json | jq -r '.MESSAGE'
+```
 
-- `rev <file>`: reverses characters in file line by line
+Journal management
+```bash
+# Disk usage and vacuum
+journalctl --disk-usage
+journalctl --vacuum-size=1G
+journalctl --vacuum-time=7d
 
-## 63. sendmail
+# Make logs persistent (requires root; edit journald.conf)
+# /etc/systemd/journald.conf: set Storage=persistent
+systemctl restart systemd-journald
 
-## 64. ar
+# Tip: tune RateLimitIntervalSec/RateLimitBurst to manage log storms
+```
 
-- The GNU ar program creates, modifies, and extracts from archives. An archive is a single file holding a collection of other files in a structure that makes it possible to retrieve the original individual files (called members of the archive).
+Resolved (DNS)
+```bash
+# Overall resolver status
+resolvectl status
 
-## 65. readelf
+# Query using systemd-resolved
+resolvectl query example.com
 
-- This program performs a similar function to objdump but it goes into more detail and it exists independently of the BFD library, so if there is a bug in BFD then readelf will not be affected.
+# Flush caches
+resolvectl flush-caches
+```
 
-## 66. objdump
+## Security & Audit
 
-- disassemble executable
+Cheat Card
+- SELinux mode: `getenforce`; recent denials: `ausearch -m AVC -ts recent`
+- AppArmor status: `aa-status`; set complain/enforce on a profile
+- Audit rule example: `auditctl -w /etc/ssh/sshd_config -p wa -k sshcfg`
 
-## 67. nm
+SELinux
+```bash
+# Current mode and temporary permissive (diagnostic; requires root)
+getenforce
+setenforce 0  # Caution: reduces enforcement
 
-- GNU nm lists the symbols from object files objfile.... If no object files are listed as arguments, nm assumes the file a.out.
+# Contexts and recent denials
+ls -Z
+ps -eZ | head
+ausearch -m AVC -ts recent
+journalctl -t setroubleshoot
 
-## 68. who
+# Manage booleans (example: allow httpd network connect)
+getsebool -a | grep httpd
+setsebool -P httpd_can_network_connect on
+# Requires: selinux-utils/policycoreutils; setroubleshoot (optional)
+```
 
-- show who is logged in
+AppArmor
+```bash
+# Status and service
+aa-status
+systemctl status apparmor
 
-## 69. crontab
+# Toggle a profile mode
+aa-complain /path/to/bin
+aa-enforce /path/to/bin
+# Requires: apparmor-utils
+```
 
-- cron syntax: (min) (hour) (day/month) (month) (day/week)
-  - https://crontab.guru/
+Auditd
+```bash
+# Service and rules
+systemctl status auditd
+auditctl -l
 
-## 70. telnet
+# Search recent denials / by PID
+ausearch -m avc -ts recent
+ausearch -p <pid> -ts recent
 
-## 71. last
+# Watch a file for writes/attr changes (key: sshcfg)
+auditctl -w /etc/ssh/sshd_config -p wa -k sshcfg
 
-- last, lastb - show a listing of last logged in users
+# Summary report
+aureport --summary -ts today
+# Requires: auditd (auditd, auditctl, ausearch, aureport)
+```
 
-## 72. pidof
+## Containers & Namespaces
 
-- find PID of process
+Cheat Card
+- Enter container namespace: `nsenter --target <pid> --mount --uts --ipc --net --pid -- bash`
+- Docker triage: `docker ps`, `docker logs --tail=200 -f <id>`, `docker exec -it <id> sh`
+- K8s triage: `kubectl get pods -A`, `kubectl describe pod <pod> -n <ns>`,
+  `kubectl logs <pod> -n <ns> --previous`
 
-## 73. mktemp
+nsenter (enter namespaces of a PID)
+```bash
+# Get target PID (e.g., container process)
+pidof <proc>
 
-- Create a temporary file or directory, safely, and print its name.
+# Enter multiple namespaces of a PID
+nsenter --target <pid> --mount --uts --ipc --net --pid -- bash
 
-## 74. ionice
+# Inspect and chroot-like into the process rootfs
+ls -l /proc/<pid>/root
+nsenter --target <pid> --mount -- chroot /proc/<pid>/root bash
+```
 
-- set or get process I/O scheduling class and priority
+Docker (if present)
+```bash
+# List, exec, inspect PID, and tail logs
+docker ps --format '{{.ID}} {{.Names}} {{.Status}}'
+docker exec -it <id|name> bash  # or sh
+docker inspect -f '{{.State.Pid}}' <id>
+docker logs --tail=200 -f <id>
+```
 
-As of this writing, a process can be in one of three scheduling classes:
+Kubernetes (if present)
+```bash
+# Pods and events
+kubectl get pods -A -o wide
+kubectl get events -A --sort-by=.lastTimestamp | tail
 
-- **Idle** - A program running with idle I/O priority will only get disk time when no other program has asked for disk I/O for a defined grace period. The impact of an idle I/O process on normal system activity should be zero. This scheduling class does not take a priority argument. Presently, this scheduling class is permitted for an ordinary user (since kernel 2.6.25).
+# Describe, logs, and exec
+kubectl describe pod <pod> -n <ns>
+kubectl logs <pod> -n <ns> --tail=200
+kubectl logs <pod> -n <ns> --previous
+kubectl exec -it <pod> -n <ns> -- bash
+```
 
-- **Best-effort** - This is the effective scheduling class for any process that has not asked for a specific I/O priority. This class takes a priority argument from 0-7, with a lower number being higher priority. Programs running at the same best-effort priority are served in a round-robin fashion.
+CRI/containerd (if present)
+```bash
+# List, inspect, and logs via crictl
+crictl ps -a
+crictl inspect <id>
+crictl logs <id>
+```
 
-  Note that before kernel 2.6.26 a process that has not asked for an I/O priority formally uses "none" as scheduling class, but the I/O scheduler will treat such processes as if it were in the best-effort class. The priority within the best-effort class will be dynamically derived from the CPU nice level of the process: io_priority = (cpu_nice + 20) / 5.
+Notes
+- Without runtime CLIs, use `nsenter` by PID from `ps`/`systemctl`.
+- Requires: docker or podman for Docker-like commands; kubectl; crictl for containerd/CRI.
 
-  For kernels after 2.6.26 with the CFQ I/O scheduler, a process that has not asked for an I/O priority inherits its CPU scheduling class. The I/O priority is derived from the CPU nice level of the process (same as before kernel 2.6.26).
+## Incident Playbooks
 
-- **Realtime** - The RT scheduling class is given first access to the disk, regardless of what else is going on in the system. Thus the RT class needs to be used with some care, as it can starve other processes. As with the best-effort class, 8 priority levels are defined denoting how big a time slice a given process will receive on each scheduling window. This scheduling class is not permitted for an ordinary (i.e., non-root) user.
+High CPU
+```bash
+# Top CPU processes and hot threads
+ps -eo pid,ppid,user,%cpu,%mem,cmd --sort=-%cpu | head
+top -H
+ps -Lp <pid> -o pid,tid,pcpu,comm
 
-Examples:
-- `ionice -c 3 -p 89`: Sets process with PID 89 as an idle I/O process.
-- `ionice -c 2 -n 0 bash`: Runs 'bash' as a best-effort program with highest priority.
-- `ionice -p 89 91`: Prints the class and priority of the processes with PID 89 and 91.
+# Per-process CPU over time; optional perf if available
+pidstat -u 1 -p <pid>
+perf top  # if installed
+```
 
-## 75. /proc/locks
+High IO wait / Disk latency
+```bash
+# Device saturation and per-process IO
+iostat -xz 1   # watch await, %util, r/s, w/s
+pidstat -d 1
+iotop -oPa
 
-## 76. nice
+# Device/FS inventory and kernel errors
+lsblk -o NAME,TYPE,SIZE,ROTA,MOUNTPOINT,MODEL
+dmesg -T | egrep -i 'error|reset|blk|nvme'
 
-- set a nice value for program
+# Optional deep dive
+blktrace -d /dev/sdX -o - | blkparse -i -
+```
 
-## 77. renice
+Memory leak / OOM
+```bash
+# Snapshot and top RSS processes
+free -h
+ps aux --sort=-rss | head
+
+# Per-process mappings and over-time faults
+pmap -x <pid> | sort -nrk 3 | head
+pidstat -r 1 -p <pid>
+smem -r  # if installed
+
+# OOM evidence
+dmesg -T | grep -i oom || journalctl -k -g OOM
+```
+
+Packet loss / High latency
+```bash
+# Path and end-to-end latency
+ip route get <dest>
+mtr -ezbw <dest>
+
+# Interface health and TCP details
+ip -s link show <iface>
+ethtool -S <iface>
+ss -i dst <dest>
+
+# Targeted capture samples
+tcpdump -ni <iface> host <dest> and icmp
+tcpdump -ni <iface> tcp port 443 and 'tcp[tcpflags] & tcp-syn != 0'
+```
+
+DNS failures
+```bash
+# Resolve via systemd-resolved (or dig if available)
+resolvectl query example.com
+resolvectl status
+dig @8.8.8.8 example.com A +time=2 +tries=1
+
+# Reachability and captures
+ss -u 'sport = :53 or dport = :53'
+tcpdump -ni <iface> port 53
+
+# Config checks
+ls -l /etc/resolv.conf
+resolvectl flush-caches
+# Check firewall rules as appropriate
+```
+
+TLS handshake issues
+```bash
+# Inspect handshake/cert chain (TLS1.2 example)
+openssl s_client -connect host:443 -servername host -tls1_2 -showcerts
+
+# Check expiry/subject/issuer quickly
+echo | openssl s_client -connect host:443 -servername host 2>/dev/null \
+  | openssl x509 -noout -dates -subject -issuer
+
+# App behavior (SNI, ALPN, protocols)
+curl -v https://host/
+
+# If proxy/MTLS: verify CA path and client certs; check time skew
+timedatectl
+```
+
+Disk full / Inode exhaustion
+```bash
+# Space vs inodes
+df -h
+df -i
+
+# Find biggest dirs on same filesystem
+du -xhd1 /path | sort -h
+
+# Deleted-but-open files
+lsof +L1
+journalctl --vacuum-size=1G  # cull journal size
+
+# Many small files
+find /path -xdev -type f | wc -l
+```
+
+Syscall slowness
+```bash
+# Trace syscalls and timings
+strace -ttT -p <pid> -f -e trace=network,file,fsync,clock,nanosleep
+
+# Optional CPU hotspot profiling
+perf record -g -p <pid>; perf report
+```
+
+Container restart loops
+```bash
+# Docker restart loops
+docker ps --filter 'status=restarting'
+docker logs <id> --tail=200
+
+# Kubernetes restart loops
+kubectl get pods -A
+kubectl describe pod <pod> -n <ns>
+kubectl logs <pod> -n <ns> --previous
+
+# Node/agent issues
+journalctl -u kubelet
+```
 
 - modify priority of running process
-
-## 78. hdparm
-
-- `hdparm -I /dev/sda`: display settings from drive
-- `hdparm -Tt /dev/sda`: read benchmark
-- `dd if=/dev/zero of=/tmp/output conv=fdatasync bs=4M count=100; rm -f /tmp/output`: write benchmark
-
-## 79. perf
