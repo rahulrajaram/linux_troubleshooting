@@ -1,0 +1,81 @@
+# command: askllm
+
+export ASKLLM_MISTRAL_API_KEY="mistral-api-key"
+export ASKLLM_MODEL="codestral-latest"
+export ASKLLM_SYSTEM_PROMPT="You are an assistant created to help manage the Linux system in the terminal. Your task is to provide short and appropriate solutions to the problems described in the user's message without unnecessary testing. If you do not understand the task or have insufficient information, ask the user to provide more. Reply briefly and accurately, without using markdown or other text formatting - only plaintext."
+
+askllm() {
+    local -a ROLES=()
+    local -a CONTENTS=()
+    ROLES+=("system")
+    CONTENTS+=("$ASKLLM_SYSTEM_PROMPT")
+    
+    while true; do
+        if [[ -z "$ASKLLM_MISTRAL_API_KEY" ]]; then
+            echo -e "\033[31mERROR: ASKLLM_MISTRAL_API_KEY not set.\033[0m"
+            return 1
+        fi
+        
+        echo -e "\033[36mEnter query (empty to exit, 'clear' to reset history):\033[0m"
+        USER_INPUT=$(cat)
+        
+        if [[ -z "$USER_INPUT" ]]; then
+            echo -e "\033[33mExiting...\033[0m"
+            return 0
+        fi
+        
+        if [[ "$USER_INPUT" == "clear" ]]; then
+            ROLES=("system")
+            CONTENTS=("$ASKLLM_SYSTEM_PROMPT")
+            echo -e "\033[33mHistory cleared.\033[0m"
+            continue
+        fi
+        
+        echo -e "\n\033[33m---\033[0m"
+
+        
+        ROLES+=("user")
+        CONTENTS+=("$USER_INPUT")
+        
+        if ((${#ROLES[@]} > 7)); then
+            ROLES=("system" "${ROLES[@]: -6}")
+            CONTENTS=("${CONTENTS[0]}" "${CONTENTS[@]: -6}")
+        fi
+        
+        local MESSAGES="[]"
+        for i in "${!ROLES[@]}"; do
+            MESSAGES=$(jq --arg role "${ROLES[$i]}" --arg content "${CONTENTS[$i]}" \
+                '. += [{"role": $role, "content": $content}]' <<< "$MESSAGES")
+        done
+        
+        RESPONSE=$(curl -sS --connect-timeout 10 --max-time 30 \
+            "https://api.mistral.ai/v1/chat/completions" \
+            -H "Authorization: Bearer $ASKLLM_MISTRAL_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+                --argjson messages "$MESSAGES" \
+                --arg model "$ASKLLM_MODEL" \
+                '{
+                    model: $model,
+                    messages: $messages,
+                    temperature: 0.3,
+                    max_tokens: 512,
+                    stream: false
+                }')")
+        
+        ANSWER=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+        if [[ -z "$ANSWER" ]]; then
+            echo -e "\033[31mError: No LLM response.\033[0m"
+            echo -e "\033[33mAPI response:\n$RESPONSE\033[0m"
+            return 1
+        fi
+        
+        ROLES+=("assistant")
+        CONTENTS+=("$ANSWER")
+        
+        echo -e "\n\033[32m--- Response ---\033[0m"
+        echo "$ANSWER" | fold -s -w "$(tput cols)" | while IFS= read -r line; do
+            echo -e "\033[32m$line\033[0m"
+        done
+    done
+}
